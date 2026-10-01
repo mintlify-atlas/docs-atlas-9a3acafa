@@ -1,7 +1,7 @@
 ---
-title: "Telemetry and Attributes in ThingsBoard"
+title: "ThingsBoard Telemetry and Attributes: Data Storage Guide"
 sidebarTitle: "Telemetry"
-description: "ThingsBoard stores two types of time-series data: telemetry (timestamped measurements) and attributes (current state). Learn the data model, storage backends, and aggregation options."
+description: "ThingsBoard stores telemetry as timestamped series and attributes as latest state. Covers data types, attribute scopes, aggregation, and storage backends."
 ---
 
 ThingsBoard separates device data into two distinct storage models: **telemetry** (time-series measurements that accumulate over time) and **attributes** (the current state of an entity, stored as the latest value only). Understanding the difference determines how you ingest data, query it in dashboards, and configure retention policies. Both models share the same key-value structure and the same five supported data types.

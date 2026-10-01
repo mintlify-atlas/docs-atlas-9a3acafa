@@ -1,7 +1,7 @@
 ---
 title: "Install ThingsBoard: Docker, Kubernetes, and Packages"
 sidebarTitle: "Installation"
-description: "Deploy ThingsBoard using Docker Compose for development or Kubernetes for production. Supports PostgreSQL and Cassandra, with optional Kafka for high-throughput messaging."
+description: "Deploy ThingsBoard via Docker Compose, Kubernetes, or Ubuntu package. Covers PostgreSQL setup, port configuration, and first-run database initialisation."
 ---
 
 ThingsBoard can be installed in several ways depending on your environment and operational requirements. Docker Compose is the fastest path to a running instance and is ideal for development and small deployments. Kubernetes is recommended for production workloads that require horizontal scaling and high availability. The Debian/Ubuntu package is suitable for teams that prefer running the application directly on the host OS without containers.
@@ -62,7 +62,6 @@ ThingsBoard can be installed in several ways depending on your environment and o
         environment:
           # --- Installation flags ---
           INSTALL_TB: "true"          # Run DB schema install on first start
-          LOAD_DEMO: "false"          # Set to "true" to load demo devices and dashboards
 
           # --- Queue type ---
           TB_QUEUE_TYPE: "in-memory"  # Use "kafka" for microservices / high-throughput
@@ -117,7 +116,7 @@ ThingsBoard can be installed in several ways depending on your environment and o
 
     Wait until you see a line similar to:
 
-    ```
+    ```text
     Started ThingsBoard in 45 seconds
     ```
 
@@ -273,15 +272,15 @@ ThingsBoard can be installed in several ways depending on your environment and o
 
     ### 1. Install Java 25
 
-    ThingsBoard requires a JDK/JRE compatible with Java 25 (the project's compiler target). Install it with:
+    ThingsBoard requires Java 25 (the project's compiler target is `release=25`). Install OpenJDK 25 with:
 
     ```bash
     sudo apt-get update
-    sudo apt-get install -y openjdk-21-jre-headless
+    sudo apt-get install -y openjdk-25-jre-headless
     ```
 
     <Info>
-      While the Maven build compiles to Java 25, a Java 21 LTS JRE is sufficient for running the pre-built `.deb` release packages distributed by ThingsBoard. Check the [official release notes](https://thingsboard.io/docs/pe/installation/) for the exact JRE requirement for your target version.
+      OpenJDK 25 requires Ubuntu 22.04 LTS or newer. After installation, confirm the active version with `java -version` and, if needed, set it as the default with `sudo update-alternatives --config java`.
     </Info>
 
     ### 2. Install and configure PostgreSQL
@@ -328,7 +327,7 @@ ThingsBoard can be installed in several ways depending on your environment and o
 
     A successful run prints:
 
-    ```
+    ```text
     ThingsBoard installed successfully!
     ```
 
@@ -353,7 +352,7 @@ ThingsBoard can be installed in several ways depending on your environment and o
 
     Wait for the log line:
 
-    ```
+    ```text
     Started ThingsBoard in XX seconds
     ```
   </Tab>
@@ -365,7 +364,7 @@ ThingsBoard can be installed in several ways depending on your environment and o
 
 Once ThingsBoard has started, open your browser and go to:
 
-```
+```text
 http://localhost:8080
 ```
 

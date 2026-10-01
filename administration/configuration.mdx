@@ -1,7 +1,7 @@
 ---
 title: "Configure ThingsBoard: Server, Database, and Queue Settings"
 sidebarTitle: "Configuration"
-description: "ThingsBoard is configured via thingsboard.yml and environment variables. Key settings cover the HTTP server, database connections, transport protocols, queue backends, and rate limits."
+description: "ThingsBoard is configured via thingsboard.yml and env vars. Covers HTTP server, PostgreSQL, time-series backends, Kafka message queue, and rate limiting."
 ---
 
 ThingsBoard reads all of its runtime configuration from `thingsboard.yml`, located at `/etc/thingsboard/conf/thingsboard.yml` in a standard Linux installation. Every value in the file follows the pattern `"${ENV_VAR:default}"`, which means you can override any setting by exporting an environment variable — no file edits required. This 12-factor-style approach makes ThingsBoard straightforward to deploy in containers and orchestrated environments where configuration is injected at runtime.

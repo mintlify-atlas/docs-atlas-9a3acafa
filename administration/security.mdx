@@ -1,7 +1,7 @@
 ---
 title: "Secure ThingsBoard: JWT, OAuth2, 2FA, and TLS"
 sidebarTitle: "Security"
-description: "ThingsBoard uses JWT tokens for API authentication, supports OAuth2 social login, enforces two-factor authentication, and can be secured end-to-end with TLS for all transports."
+description: "ThingsBoard secures APIs with JWT tokens, supports OAuth2 SSO and 2FA, enforces password policies, and provides TLS encryption for all transport protocols."
 ---
 
 ThingsBoard provides a layered security model spanning token-based API authentication, federated identity via OAuth2/OIDC, multi-factor verification, end-to-end TLS for every transport protocol, and a configurable password policy with brute-force protection. All security-relevant settings are collected under the `security` block in `thingsboard.yml` and can be overridden with environment variables without touching the file.

@@ -207,39 +207,34 @@ curl -X GET 'http://localhost:8080/api/customer/cust-uuid-here/assets?pageSize=5
 
 ---
 
-### Assign an asset to a customer
+### Get asset infos for a customer
 
-<ResponseField name="POST /api/customer/{customerId}/asset/{assetId}" type="endpoint" />
+<ResponseField name="GET /api/customer/{customerId}/assetInfos" type="endpoint" />
 
-Assigns the asset to the specified customer, making it visible and manageable by that customer's users.
+Returns a paginated list of extended `AssetInfo` objects (including `assetProfileName` and `customerTitle`) for the specified customer. Useful when rendering asset detail cards without requiring additional lookups.
 
 <ParamField path="customerId" type="string" required>
-  UUID of the target customer.
+  UUID of the customer whose asset infos you want to list.
 </ParamField>
 
-<ParamField path="assetId" type="string" required>
-  UUID of the asset to assign.
+<ParamField query="pageSize" type="integer" required>
+  Number of records per page.
 </ParamField>
 
-```bash
-curl -X POST 'http://localhost:8080/api/customer/cust-uuid-here/asset/a3d40b30-42b6-11ef-9e02-0050568351c8' \
-  -H 'Authorization: Bearer $TOKEN'
-```
+<ParamField query="page" type="integer" required>
+  Zero-based page index.
+</ParamField>
 
----
+<ParamField query="assetProfileId" type="string">
+  Filter by asset profile UUID.
+</ParamField>
 
-### Unassign an asset from a customer
-
-<ResponseField name="DELETE /api/customer/asset/{assetId}" type="endpoint" />
-
-Removes the asset from its currently assigned customer and returns it to the tenant's unassigned pool.
-
-<ParamField path="assetId" type="string" required>
-  UUID of the asset to unassign.
+<ParamField query="textSearch" type="string">
+  Partial match filter applied to asset names.
 </ParamField>
 
 ```bash
-curl -X DELETE 'http://localhost:8080/api/customer/asset/a3d40b30-42b6-11ef-9e02-0050568351c8' \
+curl -X GET 'http://localhost:8080/api/customer/cust-uuid-here/assetInfos?pageSize=20&page=0' \
   -H 'Authorization: Bearer $TOKEN'
 ```
 

@@ -1,10 +1,10 @@
 ---
 title: "REST API Endpoints for Dashboard Management in ThingsBoard"
 sidebarTitle: "Dashboards"
-description: "Create, share, and manage ThingsBoard dashboards via REST API. Assign dashboards to customers, set public access, and query dashboard configurations."
+description: "Create and manage ThingsBoard dashboards via REST API. Query dashboard configurations, set home dashboards for tenants and customers, and list by tenant."
 ---
 
-ThingsBoard dashboards are the primary visualization layer for IoT data. Each dashboard contains a collection of configurable widgets — charts, maps, gauges, tables, and more — arranged in named states and layouts. The Dashboard Management API lets you create and update dashboards programmatically, assign them to customers, configure public sharing, and retrieve full dashboard JSON for export or version control.
+ThingsBoard dashboards are the primary visualization layer for IoT data. Each dashboard contains a collection of configurable widgets — charts, maps, gauges, tables, and more — arranged in named states and layouts. The Dashboard Management API lets you create and update dashboards programmatically, set home dashboards for tenants and customers, and retrieve full dashboard JSON for export or version control.
 
 <Note>
   The **dashboard configuration JSON** (the `configuration` field) is a complex, deeply nested object that describes every widget, its data sources, layout positions, and appearance settings. For building or modifying dashboards interactively, the ThingsBoard UI editor is strongly recommended. Use the API primarily for export/import workflows, bulk assignment, and automation.
@@ -204,59 +204,6 @@ Authorization: Bearer {jwtToken}
 
 ---
 
-### Assign dashboard to customer
-
-Makes the dashboard visible to all users belonging to the specified customer.
-
-```http
-POST /api/customer/{customerId}/dashboard/{dashboardId}
-Authorization: Bearer {jwtToken}
-```
-
-<ParamField path="customerId" type="string" required>
-  UUID of the customer to assign the dashboard to.
-</ParamField>
-
-<ParamField path="dashboardId" type="string" required>
-  UUID of the dashboard to assign.
-</ParamField>
-
----
-
-### Unassign dashboard from customer
-
-Removes the dashboard from the customer's visible set without deleting it.
-
-```http
-DELETE /api/customer/{customerId}/dashboard/{dashboardId}
-Authorization: Bearer {jwtToken}
-```
-
-<ParamField path="customerId" type="string" required>
-  UUID of the customer.
-</ParamField>
-
-<ParamField path="dashboardId" type="string" required>
-  UUID of the dashboard to unassign.
-</ParamField>
-
----
-
-### Make dashboard public
-
-Sets the dashboard to be accessible without authentication via a public URL. Returns the updated dashboard object with the public customer assignment populated.
-
-```http
-POST /api/customer/public/dashboard/{dashboardId}
-Authorization: Bearer {jwtToken}
-```
-
-<ParamField path="dashboardId" type="string" required>
-  UUID of the dashboard to make public.
-</ParamField>
-
----
-
 ### Set tenant home dashboard
 
 Configures the default landing dashboard for all users in the tenant.
@@ -299,7 +246,7 @@ Content-Type: application/json
 
 ---
 
-## Full example: create and share a dashboard
+## Full example: create a dashboard and set it as home
 
 <Steps>
   <Step title="Create the dashboard">
@@ -313,19 +260,19 @@ Content-Type: application/json
     ```
   </Step>
 
-  <Step title="Assign the dashboard to a customer">
+  <Step title="Set as the tenant's home dashboard">
     ```bash
-    curl -X POST "https://thingsboard.example.com/api/customer/${CUSTOMER_ID}/dashboard/${DASHBOARD_ID}" \
-      -H "Authorization: Bearer $TENANT_JWT"
-    ```
-  </Step>
-
-  <Step title="Set as the customer's home dashboard">
-    ```bash
-    curl -X POST "https://thingsboard.example.com/api/customer/dashboard/home/info" \
+    curl -X POST "https://thingsboard.example.com/api/tenant/dashboard/home/info" \
       -H "Authorization: Bearer $TENANT_JWT" \
       -H "Content-Type: application/json" \
       -d "{\"dashboardId\": \"${DASHBOARD_ID}\", \"hideDashboardToolbar\": false}"
+    ```
+  </Step>
+
+  <Step title="Verify the dashboard is listed">
+    ```bash
+    curl "https://thingsboard.example.com/api/tenant/dashboards?pageSize=10&page=0" \
+      -H "Authorization: Bearer $TENANT_JWT"
     ```
   </Step>
 </Steps>

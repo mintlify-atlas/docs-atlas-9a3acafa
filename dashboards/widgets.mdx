@@ -1,7 +1,7 @@
 ---
 title: "ThingsBoard Dashboard Widgets: Types and Configuration"
 sidebarTitle: "Widgets"
-description: "ThingsBoard includes 100+ built-in widgets across five categories: time-series charts, latest values, control, alarm, and static. Learn how to configure datasources and settings."
+description: "ThingsBoard includes time-series, latest value, RPC control, alarm, and static widgets. Configure datasources, aggregation, or build custom widget types."
 ---
 
 Widgets are the building blocks of every ThingsBoard dashboard. Each widget subscribes to one or more entity datasources, renders incoming data according to its type, and can expose actions such as sending RPC commands or navigating between dashboard states. The platform ships with over 100 built-in widget types organized into bundles, and every widget can be extended or replaced by a custom implementation written in HTML, CSS, and JavaScript.
@@ -240,24 +240,26 @@ Widget types are organized into **bundles** (`WidgetsBundle`). A bundle groups r
 Export a bundle from one ThingsBoard instance as a JSON file, then import it into another:
 
 1. Navigate to **Widget Library**.
-2. Click the three-dot menu on the target bundle and choose **Export widget bundle**.
+2. Click the three-dot menu on the target bundle and choose **Export widget bundle**. The bundle is downloaded as a self-contained JSON file including all widget type descriptors, HTML templates, CSS, and controller scripts.
 3. On the destination instance, click **Import widget bundle** and upload the JSON file.
 
-The import endpoint is:
+Bundle creation and updates are managed via:
 
 ```
-POST /api/widgetsBundle/import
+POST /api/widgetsBundle
 Content-Type: application/json
-Body: <exported bundle JSON>
+Body: <WidgetsBundle JSON>
 ```
 
 ### Exporting a Single Widget Type
 
+Retrieve a widget type's full details (including HTML, CSS, and JS) for backup or migration:
+
 ```
-GET /api/widgetType/{widgetTypeId}/export
+GET /api/widgetType/{widgetTypeId}
 ```
 
-The response is a self-contained JSON that includes the full `WidgetTypeDetails` descriptor, HTML template, CSS, and controller script. It can be re-imported on any instance via **Widget Library → Import widget type**.
+The response is a `WidgetTypeDetails` object containing the full descriptor, HTML template, CSS, and controller script. It can be re-imported on any instance via **Widget Library → Import widget type** in the UI.
 
 <Note>
   For advanced analytics—cohort analysis, anomaly detection, predictive forecasting—ThingsBoard offers the **Trendz Analytics** add-on. Trendz integrates as a widget bundle and provides a point-and-click analytics designer whose output can be embedded directly in any dashboard as a native widget. It operates on the same entity model and alias system as built-in widgets, requiring no additional data pipelines.

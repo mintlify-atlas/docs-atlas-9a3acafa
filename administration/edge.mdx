@@ -1,7 +1,7 @@
 ---
 title: "ThingsBoard Edge: Edge Computing for IoT"
 sidebarTitle: "Edge"
-description: "ThingsBoard Edge extends the platform to remote sites, enabling local data processing, dashboards, and rule engine execution even when connectivity to the cloud is interrupted."
+description: "ThingsBoard Edge brings the rule engine and dashboards to remote sites. Operates fully offline and syncs buffered telemetry when cloud connectivity is restored."
 ---
 
 ThingsBoard Edge brings the full power of the platform — rule engine, dashboards, device management, and telemetry storage — to remote sites and on-premises installations. Each Edge node is a complete ThingsBoard instance that stays synchronized with the central server over a gRPC channel. When the upstream connection is lost, the Edge continues operating autonomously: it processes device data, evaluates rule chains, and stores telemetry locally. Once connectivity is restored, buffered data is automatically replayed to the server.

@@ -1,7 +1,7 @@
 ---
 title: "ThingsBoard Notifications: Alarms, Email, SMS, and Slack"
 sidebarTitle: "Notifications"
-description: "ThingsBoard sends notifications through multiple channels — email, SMS, Slack, Microsoft Teams, mobile push, and webhook. Configure notification rules to trigger on alarms, device events, and entity changes."
+description: "ThingsBoard delivers alerts via web, email, SMS, Slack, Teams, and mobile push. Build notification rules for alarms, device activity, and system events."
 ---
 
 ThingsBoard's notification system lets you route alerts and operational events to the people and tools that need them. A notification moves through three objects — a **template** (what to say), a **target** (who to notify), and a **rule** (when to fire) — and is then dispatched over one or more **delivery channels** such as email, SMS, Slack, or in-app web notifications. All of these are managed from **Notification Center** in the left navigation.
@@ -50,6 +50,7 @@ Notification rules fire on events defined in `NotificationRuleTriggerType`. Tena
 | `ENTITIES_LIMIT` | System | A tenant is approaching its entity count limit |
 | `API_USAGE_LIMIT` | System | A tenant is approaching or has hit an API usage limit |
 | `RATE_LIMITS` | System | Rate limits triggered for a tenant |
+| `TASK_PROCESSING_FAILURE` | System | Internal task processing failure detected |
 | `RESOURCES_SHORTAGE` | System | Server CPU, memory, or disk running low |
 
 ## Notification Templates

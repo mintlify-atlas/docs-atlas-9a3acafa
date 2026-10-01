@@ -1,7 +1,7 @@
 ---
-title: "Remote Procedure Calls (RPC) in ThingsBoard"
+title: "Server and Device RPC Commands via ThingsBoard REST API"
 sidebarTitle: "RPC"
-description: "ThingsBoard supports server-to-device and device-to-server RPC. Send one-way or two-way commands via REST, receive results asynchronously, and handle device-initiated requests."
+description: "Send one-way or two-way RPC commands to devices in ThingsBoard via REST. Manage persistent RPC requests and handle device-initiated server-side RPC calls."
 ---
 
 Remote Procedure Calls (RPC) in ThingsBoard provide bidirectional command channels between the platform and connected devices. Unlike telemetry and attributes — which model data flow — RPC models **action invocations**: the server tells a device to reboot, adjust a setpoint, or toggle a relay, and the device can optionally return a result. RPC can also flow in the opposite direction: a device can ask the server to look up data or trigger a rule chain action.

@@ -1,7 +1,7 @@
 ---
 title: "ThingsBoard Rule Engine: Processing IoT Events and Data"
 sidebarTitle: "Rule Engine"
-description: "The ThingsBoard rule engine processes incoming messages through visual rule chains. Filter, transform, enrich, and route telemetry and lifecycle events without writing server code."
+description: "ThingsBoard rule engine routes messages through rule chains. Filter, transform, enrich, and react to telemetry and lifecycle events without code changes."
 ---
 
 The ThingsBoard rule engine is a reactive, event-driven processing pipeline that sits between your devices and every downstream action — alarm creation, data enrichment, external system integration, and custom business logic. Every message flowing through the platform (telemetry upload, attribute update, device connect, RPC call, alarm lifecycle event) is routed through a **rule chain** made up of interconnected **rule nodes**. You configure chains visually in the UI; no server deployments are required to change processing logic.
@@ -31,7 +31,7 @@ Every message (`TbMsg`) carries the following fields, as defined in `TbMsg.java`
 |---|---|---|
 | `id` | UUID | Unique message identifier. |
 | `ts` | long | Message timestamp (milliseconds since epoch). |
-| `type` | String | Message type string, e.g., `Post telemetry`, `Alarm Created` (see `TbMsgType`). |
+| `type` | String | Message type string, e.g., `POST_TELEMETRY_REQUEST`, `ALARM_CREATED` (see `TbMsgType`). |
 | `originator` | `EntityId` | The entity that produced the message (device, asset, etc.). |
 | `customerId` | `CustomerId` | Customer the originator belongs to, if assigned. |
 | `metaData` | Map&lt;String, String&gt; | Key-value metadata enriched by nodes along the chain. |
@@ -135,8 +135,8 @@ Action nodes produce side-effects: persisting data, raising alarms, sending RPC 
 | `TbMsgTimeseriesNode` | Saves the message payload as time-series telemetry. Supports configurable TTL and server-side timestamp override. |
 | `TbMsgAttributesNode` | Saves key-value pairs as entity attributes (any scope). |
 | `TbMsgDeleteAttributesNode` | Deletes attribute keys from an entity. |
-| `TbCreateAlarmNode` | Creates or updates an alarm on the originator entity. Routes to `Alarm Created` or `Alarm Updated`. |
-| `TbClearAlarmNode` | Clears an active alarm on the originator. Routes to `Alarm Cleared` or `False`. |
+| `TbCreateAlarmNode` | Creates or updates an alarm on the originator entity. Routes to `Created`, `Updated`, or `False`. |
+| `TbClearAlarmNode` | Clears an active alarm on the originator. Routes to `Cleared` or `False`. |
 | `TbLogNode` | Writes a JS/TBEL-formatted string to the rule engine log. Useful for debugging. |
 | `TbSendRPCRequestNode` | Sends a server-side RPC request to the originator device. |
 | `TbSendRPCReplyNode` | Sends an RPC reply back to the device that originated a `TO_SERVER_RPC_REQUEST`. |

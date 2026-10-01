@@ -1,7 +1,7 @@
 ---
 title: "ThingsBoard: Open-Source IoT Platform Overview"
 sidebarTitle: "Introduction"
-description: "ThingsBoard is an open-source IoT platform for device management, real-time telemetry collection, visualization, and automation. Runs on-premises or in the cloud."
+description: "ThingsBoard is an open-source IoT platform for device management, telemetry, dashboards, and rule engine automation — deploy on-premises or in the cloud."
 ---
 
 ThingsBoard is an all-in-one open-source IoT platform that handles device management, real-time data collection, visualization, and event-driven automation in a single deployable unit. Whether you are building a smart-energy dashboard, a fleet-tracking solution, or an industrial SCADA system, ThingsBoard gives you the connectivity, storage, and processing primitives to go from prototype to production without stitching together a dozen separate tools. It can be deployed entirely on-premises, run in any cloud, or accessed as a fully managed cloud service.
@@ -37,7 +37,7 @@ ThingsBoard ships as a single Spring Boot application (`ThingsboardServerApplica
 
 All services — HTTP/MQTT/CoAP transport, rule engine, core API, and UI — run inside one JVM process. The message queue defaults to `in-memory` (`TB_QUEUE_TYPE=in-memory`), so no external broker is required. This is the recommended starting point for development, small deployments, and teams evaluating the platform.
 
-```
+```text
 ┌──────────────────────────────────────────────────────┐
 │                ThingsBoard Monolith                   │
 │  Transport ─► In-Memory Queue ─► Rule Engine ─► DB   │
@@ -60,7 +60,7 @@ ThingsBoard provides native support for the most common IoT connectivity standar
 |----------|-------------|-----------|
 | **HTTP** | 8080 (shared) | `HTTP_ENABLED` |
 | **MQTT** | 1883 (plain), 8883 (TLS) | `MQTT_ENABLED`, `MQTT_BIND_PORT` |
-| **CoAP** | UDP (standalone server) | `COAP_ENABLED`, `COAP_SERVER_ENABLED` |
+| **CoAP** | 5683 (UDP), 5684 (DTLS) | `COAP_ENABLED`, `COAP_SERVER_ENABLED` |
 | **LwM2M** | 5685 (plain), 5686 (DTLS) | `LWM2M_ENABLED`, `LWM2M_BIND_PORT` |
 | **SNMP** | configurable via `SNMP_BIND_PORT` | `SNMP_ENABLED` |
 

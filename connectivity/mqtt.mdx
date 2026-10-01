@@ -43,6 +43,7 @@ ThingsBoard maps every IoT operation to a specific MQTT topic. The base topic fo
 |-------|-----------|-------------|
 | `v1/devices/me/telemetry` | **Publish** | Send time-series telemetry data |
 | `v1/devices/me/attributes` | **Publish** | Update client-side attributes |
+| `v1/devices/me/attributes` | **Subscribe** | Receive server-pushed attribute update notifications |
 | `v1/devices/me/attributes/request/{requestId}` | **Publish** | Request server/shared attributes |
 | `v1/devices/me/attributes/response/+` | **Subscribe** | Receive attribute request responses |
 | `v1/devices/me/rpc/request/+` | **Subscribe** | Receive server-initiated RPC commands |
@@ -242,6 +243,4 @@ mosquitto_pub -d -q 1 \
   -m '{"Sensor-001": [{"ts": 1609459200000, "values": {"temperature": 22.1}}]}'
 ```
 
-<Note>
-  ThingsBoard also supports **MQTT over WebSocket** on port **8084** (and WSS on 8085 when TLS is configured). Use a WebSocket-capable MQTT client or browser library such as MQTT.js to connect. The topic structure and authentication method are identical to plain MQTT.
-</Note>
+

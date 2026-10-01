@@ -1,7 +1,7 @@
 ---
 title: "Building IoT Dashboards in ThingsBoard"
 sidebarTitle: "Overview"
-description: "ThingsBoard dashboards display real-time and historical IoT data using drag-and-drop widgets. Share dashboards with customers, embed them externally, or set up public views."
+description: "ThingsBoard dashboards display live IoT data via widgets. Share with customers, embed in external pages, or publish as public views requiring no login."
 ---
 
 ThingsBoard dashboards are the primary interface through which operators and customers interact with IoT data. Each dashboard is a configurable canvas that combines widgets displaying real-time telemetry, historical charts, control elements, and alarms—all driven by live entity subscriptions. Dashboards support multi-state navigation, responsive breakpoint layouts, and granular sharing controls so you can tailor the experience for every role in your organization.
@@ -184,23 +184,28 @@ The URL reflects the active state and its params, so deep links work out of the 
 
 <CardGroup cols={2}>
   <Card title="Assign to Customer" icon="user-group">
-    Open the dashboard list, click the three-dot menu on a dashboard, and choose **Manage assigned customers**. Select one or more customer accounts. Those customers will see the dashboard in their own **Dashboards** list and can view (but not edit) it.
-
-    The REST API endpoint for programmatic assignment is:
+    Dashboard sharing is managed through **Entity Groups**. Create an entity group of type **Dashboard**, add the dashboard(s) to it, and share the group with a customer via:
 
     ```
-    POST /api/dashboard/{dashboardId}/customers/add
-    Body: ["<customerId-1>", "<customerId-2>"]
+    POST /api/entityGroup/{entityGroupId}/share
     ```
+
+    Customers assigned to a shared dashboard group will see those dashboards in their own **Dashboards** list and can view (but not edit) them.
   </Card>
   <Card title="Make Public" icon="globe">
-    Assigning a dashboard to the built-in **Public** customer generates a shareable URL of the form:
+    To make a dashboard publicly accessible, add it to a Dashboard entity group and call the make-public endpoint:
+
+    ```
+    POST /api/entityGroup/{entityGroupId}/makePublic
+    ```
+
+    This generates a shareable URL of the form:
 
     ```
     https://<host>/dashboard/<dashboardId>?publicId=<publicCustomerId>
     ```
 
-    The URL is constructed by `DashboardService.getPublicDashboardLink()`. No login is required to view a public dashboard.
+    No login is required to view a public dashboard.
   </Card>
   <Card title="Embed via iframe" icon="code">
     Any dashboard URL—including public ones—can be embedded directly in an external web page using an `<iframe>`:
@@ -217,13 +222,15 @@ The URL reflects the active state and its params, so deep links work out of the 
     You can suppress the toolbar by appending `&hideToolbar=true` to the URL, or hide it globally in **Dashboard settings** (`hideToolbar: true`).
   </Card>
   <Card title="Home Dashboard" icon="house">
-    Tenants and customers can each designate a **home dashboard** that opens automatically on login. Set this via **Dashboard settings → Make home dashboard for tenant** or the REST endpoint:
+    Tenants and customers can each designate a **home dashboard** that opens automatically on login. Set this via the REST endpoint:
 
     ```
     POST /api/tenant/dashboard/home/info
-    Body: { "dashboardId": { "id": "<uuid>", "entityType": "DASHBOARD" },
+    Body: { "dashboardId": { "id": "<uuid>" },
             "hideDashboardToolbar": false }
     ```
+
+    For the customer home dashboard, use `POST /api/customer/dashboard/home/info` with the same body structure.
   </Card>
 </CardGroup>
 

@@ -1,7 +1,7 @@
 ---
-title: "Authenticate with the ThingsBoard REST API"
+title: "ThingsBoard REST API Authentication with JWT Tokens"
 sidebarTitle: "Authentication"
-description: "ThingsBoard REST API uses JWT Bearer tokens. Obtain a token by posting credentials to /api/auth/login and include it in the Authorization header on every request."
+description: "Obtain a JWT token via POST /api/auth/login, attach it as a Bearer header on every request, and refresh it with POST /api/auth/token."
 ---
 
 Every ThingsBoard REST API call — except for the handful of routes under `/api/noauth/` — requires a valid JSON Web Token (JWT). Tokens are short-lived credentials that encode the caller's identity and role. This page explains how to obtain a token, attach it to requests, refresh it before it expires, and understand the role-based access model that governs what each token can do.
@@ -242,4 +242,4 @@ Content-Type: application/json
 }
 ```
 
-On success the endpoint returns a fresh `JwtPair` — update your stored tokens. Previously issued tokens remain valid until they expire naturally.
+On success the endpoint returns a fresh `JwtPair` — update your stored tokens. Previously issued tokens are immediately outdated by the server: all JWTs issued before the password change will be rejected on subsequent requests.

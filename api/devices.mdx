@@ -267,39 +267,37 @@ curl -X POST 'http://localhost:8080/api/device/credentials' \
 
 ---
 
-### Assign a device to a customer
+### Claim a device to a customer
 
-<ResponseField name="POST /api/customer/{customerId}/device/{deviceId}" type="endpoint" />
+<ResponseField name="POST /api/customer/device/{deviceName}/claim" type="endpoint" />
 
-Assigns the device to the specified customer, making it visible and manageable by that customer's users.
+Claims the specified device on behalf of the currently authenticated customer. Claiming makes it possible to assign a device to a customer using a device-side or server-side secret key defined during provisioning. Once claimed, the customer becomes the device owner and customer users may access device data and issue RPC commands.
 
-<ParamField path="customerId" type="string" required>
-  UUID of the target customer.
-</ParamField>
-
-<ParamField path="deviceId" type="string" required>
-  UUID of the device to assign.
+<ParamField path="deviceName" type="string" required>
+  Name of the device to claim. The device must have a provisioning secret configured.
 </ParamField>
 
 ```bash
-curl -X POST 'http://localhost:8080/api/customer/cust-uuid-here/device/784f394c-42b6-11ef-9e02-0050568351c8' \
-  -H 'Authorization: Bearer $TOKEN'
+curl -X POST 'http://localhost:8080/api/customer/device/Sensor-001/claim' \
+  -H 'Authorization: Bearer $TOKEN' \
+  -H 'Content-Type: application/json' \
+  -d '{"secretKey": "your-claim-secret"}'
 ```
 
 ---
 
-### Unassign a device from a customer
+### Reclaim (unclaim) a device
 
-<ResponseField name="DELETE /api/customer/device/{deviceId}" type="endpoint" />
+<ResponseField name="DELETE /api/customer/device/{deviceName}/claim" type="endpoint" />
 
-Removes the device from its currently assigned customer and returns it to the unassigned pool managed solely by the tenant.
+Reclaims the device, removing it from its currently assigned customer and making it available for claiming again. This is the reverse of the claim operation.
 
-<ParamField path="deviceId" type="string" required>
-  UUID of the device to unassign.
+<ParamField path="deviceName" type="string" required>
+  Name of the device to reclaim.
 </ParamField>
 
 ```bash
-curl -X DELETE 'http://localhost:8080/api/customer/device/784f394c-42b6-11ef-9e02-0050568351c8' \
+curl -X DELETE 'http://localhost:8080/api/customer/device/Sensor-001/claim' \
   -H 'Authorization: Bearer $TOKEN'
 ```
 

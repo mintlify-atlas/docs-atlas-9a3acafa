@@ -1,0 +1,249 @@
+---
+title: "Secure ThingsBoard: JWT, OAuth2, 2FA, and TLS"
+sidebarTitle: "Security"
+description: "ThingsBoard uses JWT tokens for API authentication, supports OAuth2 social login, enforces two-factor authentication, and can be secured end-to-end with TLS for all transports."
+---
+
+ThingsBoard provides a layered security model spanning token-based API authentication, federated identity via OAuth2/OIDC, multi-factor verification, end-to-end TLS for every transport protocol, and a configurable password policy with brute-force protection. All security-relevant settings are collected under the `security` block in `thingsboard.yml` and can be overridden with environment variables without touching the file.
+
+<Warning>
+  The default system administrator credentials (`sysadmin@thingsboard.org` / `sysadmin`) must be changed before exposing ThingsBoard to any network. Navigate to **System Settings → Profile** after first login and set a strong password.
+</Warning>
+
+## JWT Authentication
+
+Every ThingsBoard API call (except the login endpoint itself) requires a JSON Web Token in the `Authorization: Bearer <token>` header. Tokens are issued by:
+
+```http
+POST /api/auth/login
+Content-Type: application/json
+
+{
+  "username": "tenant@example.com",
+  "password": "secret"
+}
+```
+
+The response contains an `accessToken` (used for API calls) and a `refreshToken` (used to obtain a new access token without re-authenticating).
+
+JWT parameters are configured under `security.jwt`:
+
+```yaml
+security:
+  jwt:
+    tokenExpirationTime: "${JWT_TOKEN_EXPIRATION_TIME:9000}"       # seconds (2.5 hours)
+    refreshTokenExpTime: "${JWT_REFRESH_TOKEN_EXPIRATION_TIME:604800}" # seconds (1 week)
+    tokenIssuer: "${JWT_TOKEN_ISSUER:thingsboard.io}"
+    tokenSigningKey: "${JWT_TOKEN_SIGNING_KEY:thingsboardDefaultSigningKey}" # Base64 encoded
+```
+
+<Info>
+  Since ThingsBoard 3.4.2, JWT values are persisted in the database during installation and upgraded automatically. On a fresh install the signing key is generated randomly if `JWT_TOKEN_SIGNING_KEY` is not set. You can update the signing key later from the System Administrator UI under **Security → JWT Token Settings**.
+</Info>
+
+| Variable | Default | Description |
+|---|---|---|
+| `JWT_TOKEN_EXPIRATION_TIME` | `9000` (2.5 h) | Access token lifetime in seconds |
+| `JWT_REFRESH_TOKEN_EXPIRATION_TIME` | `604800` (1 week) | Refresh token lifetime in seconds |
+| `JWT_TOKEN_ISSUER` | `thingsboard.io` | JWT `iss` claim value |
+| `JWT_TOKEN_SIGNING_KEY` | *(random on install)* | Base64-encoded HMAC signing key |
+| `SECURITY_USER_TOKEN_ACCESS_ENABLED` | `true` | Allow sys-admin to impersonate tenant admins |
+
+## OAuth2 / SSO Integration
+
+ThingsBoard supports OAuth2 social login and custom OIDC providers (e.g., Keycloak, Auth0, Azure AD). Provider configurations are stored in the database and managed through the **System Settings → OAuth2** section of the UI, but several low-level details are controlled by `thingsboard.yml`:
+
+```yaml
+security:
+  oauth2:
+    loginProcessingUrl: "${SECURITY_OAUTH2_LOGIN_PROCESSING_URL:/login/oauth2/code/}"
+    githubMapper:
+      emailUrl: "${SECURITY_OAUTH2_GITHUB_MAPPER_EMAIL_URL_KEY:https://api.github.com/user/emails}"
+```
+
+<Tabs>
+  <Tab title="Google">
+    Google's OIDC discovery endpoint is `https://accounts.google.com`. Configure the **Client ID**, **Client Secret**, and set the redirect URI to `https://<your-host>/login/oauth2/code/google` in the Google Cloud Console. In ThingsBoard, choose the built-in **Google** provider type, which pre-fills the authorization and token endpoints.
+  </Tab>
+  <Tab title="GitHub">
+    GitHub uses a non-standard OAuth2 flow where the email address is fetched from a separate API endpoint. ThingsBoard's built-in GitHub mapper calls `https://api.github.com/user/emails` (configurable via `SECURITY_OAUTH2_GITHUB_MAPPER_EMAIL_URL_KEY`) to resolve the primary verified email address.
+  </Tab>
+  <Tab title="Custom OIDC">
+    Any OIDC-compliant provider works. Supply the **Issuer URL**, **Client ID**, **Client Secret**, desired **scope** (`openid email profile`), and the **attribute mapping** (which claim maps to email, first name, last name). ThingsBoard uses the PKCE flow by default when the provider supports it.
+  </Tab>
+</Tabs>
+
+## Two-Factor Authentication (2FA)
+
+ThingsBoard supports four 2FA provider types, enumerated in `TwoFaProviderType`:
+
+<CardGroup cols={2}>
+  <Card title="TOTP" icon="mobile">
+    Time-based one-time passwords compatible with Google Authenticator, Authy, and any RFC 6238 app. The user scans a QR code displayed during setup.
+  </Card>
+  <Card title="SMS" icon="message">
+    A numeric verification code sent via the tenant's configured SMS provider (Twilio, AWS SNS, etc.). Requires an active SMS gateway in System Settings.
+  </Card>
+  <Card title="Email" icon="envelope">
+    A time-limited code delivered to the user's registered email address. Requires a working SMTP configuration.
+  </Card>
+  <Card title="Backup Codes" icon="key">
+    A set of single-use recovery codes generated at enrollment time. Used when the primary 2FA device is unavailable.
+  </Card>
+</CardGroup>
+
+2FA settings are managed per-platform from **System Settings → Two-Factor Authentication**. The system administrator can:
+
+- **Enable or disable** each provider type globally.
+- **Enforce** 2FA for all users, tenant admins only, or specific user groups via `enforceTwoFa` + `enforcedUsersFilter`.
+- Set the minimum time between verification code requests to prevent abuse.
+
+## TLS for All Transports
+
+### HTTPS
+
+Enable TLS on the main HTTP server by setting `SSL_ENABLED=true` and providing credentials. ThingsBoard supports both PEM certificate files and Java keystores (PKCS12 or JKS):
+
+```yaml
+server:
+  ssl:
+    enabled: "${SSL_ENABLED:false}"
+    credentials:
+      type: "${SSL_CREDENTIALS_TYPE:PEM}"   # PEM or KEYSTORE
+      pem:
+        cert_file: "${SSL_PEM_CERT:server.pem}"
+        key_file: "${SSL_PEM_KEY:server_key.pem}"
+        key_password: "${SSL_PEM_KEY_PASSWORD:server_key_password}"
+      keystore:
+        type: "${SSL_KEY_STORE_TYPE:PKCS12}"
+        store_file: "${SSL_KEY_STORE:classpath:keystore/keystore.p12}"
+        store_password: "${SSL_KEY_STORE_PASSWORD:thingsboard}"
+        key_alias: "${SSL_KEY_ALIAS:tomcat}"
+        key_password: "${SSL_KEY_PASSWORD:thingsboard}"
+  http2:
+    enabled: "${HTTP2_ENABLED:true}"  # automatically enabled with TLS
+```
+
+### MQTT TLS
+
+Secure MQTT devices connect on port **8883**. The TLS settings are independent of the HTTP server:
+
+```yaml
+transport:
+  mqtt:
+    ssl:
+      enabled: "${MQTT_SSL_ENABLED:false}"
+      bind_address: "${MQTT_SSL_BIND_ADDRESS:0.0.0.0}"
+      bind_port: "${MQTT_SSL_BIND_PORT:8883}"
+      protocol: "${MQTT_SSL_PROTOCOL:TLSv1.2}"
+      credentials:
+        type: "${MQTT_SSL_CREDENTIALS_TYPE:PEM}"   # PEM or JKS
+        pem:
+          cert_file: "${MQTT_SSL_PEM_CERT:mqttserver.pem}"
+          key_file: "${MQTT_SSL_PEM_KEY:mqttserver_key.pem}"
+          key_password: "${MQTT_SSL_PEM_KEY_PASSWORD:server_key_password}"
+      skip_validity_check_for_client_cert: "${MQTT_SSL_SKIP_VALIDITY_CHECK_FOR_CLIENT_CERT:false}"
+```
+
+### CoAP DTLS
+
+CoAP devices communicate over UDP. DTLS (Datagram TLS) is configured in the `coap` section:
+
+```yaml
+coap:
+  bind_port: "${COAP_BIND_PORT:5683}"
+  # DTLS on port 5684 — configure under coap.dtls.*
+```
+
+DTLS certificate files are set via `COAP_DTLS_PEM_CERT` and `COAP_DTLS_PEM_KEY`.
+
+### Edge gRPC TLS
+
+The gRPC channel between the ThingsBoard server and Edge nodes can also be secured:
+
+```yaml
+edges:
+  rpc:
+    ssl:
+      enabled: "${EDGES_RPC_SSL_ENABLED:false}"
+      cert: "${EDGES_RPC_SSL_CERT:certChainFile.pem}"
+      private_key: "${EDGES_RPC_SSL_PRIVATE_KEY:privateKeyFile.pem}"
+      key_password: "${EDGES_RPC_SSL_KEY_PASSWORD:}"
+```
+
+## Password Policy
+
+The system administrator configures the password policy under **System Settings → Security** in the UI. The `UserPasswordPolicy` model exposes the following fields:
+
+| Field | Description |
+|---|---|
+| `minimumLength` | Minimum number of characters |
+| `maximumLength` | Maximum number of characters |
+| `minimumUppercaseLetters` | Minimum uppercase letter count |
+| `minimumLowercaseLetters` | Minimum lowercase letter count |
+| `minimumDigits` | Minimum numeric digit count |
+| `minimumSpecialCharacters` | Minimum special character count |
+| `allowWhitespaces` | Whether spaces are permitted (default `true`) |
+| `passwordExpirationPeriodDays` | Force password change after N days |
+| `passwordReuseFrequencyDays` | Prevent reuse of passwords used within N days |
+| `forceUserToResetPasswordIfNotValid` | Force reset if existing password no longer satisfies the policy |
+
+### Brute-Force Protection
+
+The `SecuritySettings` model also controls account lockout:
+
+| Field | Description |
+|---|---|
+| `maxFailedLoginAttempts` | Lock the account after this many consecutive failed logins |
+| `userLockoutNotificationEmail` | Email address to notify when an account is locked |
+| `userActivationTokenTtl` | Hours before a new-user activation link expires (1–24) |
+| `passwordResetTokenTtl` | Hours before a password-reset link expires (1–24) |
+
+Password-reset requests are additionally throttled by the REST rate limiter:
+
+```yaml
+server:
+  rest:
+    rate_limits:
+      reset_password_per_user: "${RESET_PASSWORD_PER_USER_RATE_LIMIT_CONFIGURATION:5:3600}"
+      # default: 5 requests per hour per user
+```
+
+## HTTP Security Response Headers
+
+ThingsBoard can inject standard security headers on every HTTP response. These are off by default for compatibility with multi-domain dashboard embeds, but should be reviewed for production deployments:
+
+```yaml
+security:
+  headers:
+    x-content-type-options:
+      enabled: "${SECURITY_HEADERS_X_CONTENT_TYPE_OPTIONS_ENABLED:true}"
+    referrer-policy:
+      enabled: "${SECURITY_HEADERS_REFERRER_POLICY_ENABLED:true}"
+      value: "${SECURITY_HEADERS_REFERRER_POLICY_VALUE:strict-origin-when-cross-origin}"
+    x-frame-options:
+      enabled: "${SECURITY_HEADERS_X_FRAME_OPTIONS_ENABLED:false}"
+      value: "${SECURITY_HEADERS_X_FRAME_OPTIONS_VALUE:SAMEORIGIN}"
+    content-security-policy:
+      enabled: "${SECURITY_HEADERS_CONTENT_SECURITY_POLICY_ENABLED:false}"
+      report-only: "${SECURITY_HEADERS_CONTENT_SECURITY_POLICY_REPORT_ONLY:false}"
+```
+
+<Warning>
+  Enabling `X-Frame-Options: DENY` will break all iframe embedding, including dashboards shared on external sites. Use `SAMEORIGIN` if you need clickjacking protection without breaking embeds. Enable `Content-Security-Policy` in `report-only` mode first to evaluate the impact before enforcing.
+</Warning>
+
+## Audit Logs
+
+ThingsBoard records every user action and API call in the audit log. Audit log entries are stored in the `audit_log` table and are accessible at **Audit Logs** in the left navigation for both system administrators and tenant administrators. TTL-based cleanup is controlled by:
+
+```yaml
+sql:
+  ttl:
+    audit_logs:
+      enabled: "${SQL_TTL_AUDIT_LOGS_ENABLED:true}"
+      ttl: "${SQL_TTL_AUDIT_LOGS_SECS:0}"               # 0 = disabled (keep forever)
+      checking_interval_ms: "${SQL_TTL_AUDIT_LOGS_CHECKING_INTERVAL_MS:86400000}"  # 1 day
+```
+
+Setting `SQL_TTL_AUDIT_LOGS_SECS` to a non-zero value (e.g. `7776000` for 90 days) enables automatic pruning of old log entries to control storage growth.

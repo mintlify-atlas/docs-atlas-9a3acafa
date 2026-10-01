@@ -1,0 +1,354 @@
+---
+title: "Over-the-Air Firmware Updates via ThingsBoard API"
+sidebarTitle: "OTA Updates"
+description: "ThingsBoard OTA enables remote firmware and software updates for IoT devices. Upload packages via REST API, assign them to device profiles, and track update progress through telemetry."
+---
+
+ThingsBoard's Over-the-Air (OTA) update framework lets you distribute new firmware or software to entire fleets of devices without physical access. The process involves three stages: uploading a package binary to ThingsBoard, assigning that package to a device profile, and then letting devices download it autonomously while reporting their progress back as telemetry.
+
+OTA updates integrate with the Device HTTP API for downloads and use the standard attribute/telemetry channels for coordination — no external file server required.
+
+<Tip>
+  Always set a **checksum** when uploading OTA packages. ThingsBoard stores the checksum and includes it in the shared attributes pushed to devices, allowing firmware to verify file integrity before applying the update and preventing silent corruption during download.
+</Tip>
+
+---
+
+## Package types
+
+| Type | Description |
+|------|-------------|
+| `FIRMWARE` | Device operating firmware, bootloader image, or microcontroller binary |
+| `SOFTWARE` | Application-level software, scripts, or configuration packages that run on top of the firmware |
+
+---
+
+## OTA package object
+
+<ResponseField name="id" type="object">
+  Unique identifier. Contains `entityType: "OTA_PACKAGE"` and a UUID `id`.
+</ResponseField>
+
+<ResponseField name="tenantId" type="object">
+  Tenant that owns this package.
+</ResponseField>
+
+<ResponseField name="deviceProfileId" type="object">
+  The device profile this package targets. Only devices using this profile will receive update notifications.
+</ResponseField>
+
+<ResponseField name="type" type="string" required>
+  `FIRMWARE` or `SOFTWARE`.
+</ResponseField>
+
+<ResponseField name="title" type="string" required>
+  Descriptive name for the package (e.g., `"MainController FW"`). Used by devices to identify the correct binary.
+</ResponseField>
+
+<ResponseField name="version" type="string" required>
+  Semantic version string (e.g., `"2.1.0"`, `"v3.0.0-rc1"`). Devices compare this against their current version to detect available updates.
+</ResponseField>
+
+<ResponseField name="tag" type="string">
+  Optional label for the release (e.g., `"stable"`, `"beta"`).
+</ResponseField>
+
+<ResponseField name="url" type="string">
+  If the package binary is hosted externally, provide a URL here instead of uploading the file to ThingsBoard.
+</ResponseField>
+
+<ResponseField name="checksum" type="string">
+  Hash of the package binary used for integrity verification on the device. See `checksumAlgorithm`.
+</ResponseField>
+
+<ResponseField name="checksumAlgorithm" type="string">
+  Algorithm used for `checksum`. One of `MD5`, `SHA256`, `SHA384`, `SHA512`, `CRC32`, `MURMUR3_32`, `MURMUR3_128`.
+</ResponseField>
+
+<ResponseField name="contentType" type="string">
+  MIME type of the uploaded binary (e.g., `application/octet-stream`).
+</ResponseField>
+
+<ResponseField name="dataSize" type="integer">
+  Size of the uploaded binary in bytes.
+</ResponseField>
+
+---
+
+## Management API endpoints
+
+### Create OTA package metadata
+
+First, create the package record (without the binary). This returns a package `id` needed for the upload step.
+
+```http
+POST /api/otaPackage
+Authorization: Bearer {jwtToken}
+Content-Type: application/json
+```
+
+**Request body**
+
+```json
+{
+  "deviceProfileId": {
+    "entityType": "DEVICE_PROFILE",
+    "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+  },
+  "type": "FIRMWARE",
+  "title": "MainController FW",
+  "version": "2.1.0",
+  "tag": "stable",
+  "checksumAlgorithm": "SHA256"
+}
+```
+
+**Response** — the saved package object with its generated `id`.
+
+---
+
+### Upload package binary
+
+Upload the actual firmware binary as a multipart form. Use the `id` returned from the metadata creation step.
+
+```http
+POST /api/otaPackage/{otaPackageId}
+Authorization: Bearer {jwtToken}
+Content-Type: multipart/form-data
+```
+
+<ParamField path="otaPackageId" type="string" required>
+  UUID of the OTA package record created in the previous step.
+</ParamField>
+
+<ParamField body="file" type="binary" required>
+  The firmware binary file.
+</ParamField>
+
+<ParamField body="checksum" type="string">
+  Optional checksum value. If omitted, ThingsBoard computes it automatically using the algorithm set in the metadata.
+</ParamField>
+
+**Example upload with curl**
+
+```bash
+curl -X POST "https://thingsboard.example.com/api/otaPackage/${OTA_ID}" \
+  -H "Authorization: Bearer $TENANT_JWT" \
+  -F "file=@./firmware-v2.1.0.bin"
+```
+
+---
+
+### Get OTA package by ID
+
+```http
+GET /api/otaPackage/{otaPackageId}
+Authorization: Bearer {jwtToken}
+```
+
+<ParamField path="otaPackageId" type="string" required>
+  UUID of the OTA package.
+</ParamField>
+
+---
+
+### Download OTA package binary
+
+```http
+GET /api/otaPackage/{otaPackageId}/download
+Authorization: Bearer {jwtToken}
+```
+
+Returns the binary file with appropriate `Content-Disposition` headers.
+
+---
+
+### List OTA packages
+
+Returns a paginated list of all OTA packages, optionally filtered by device profile and type.
+
+```http
+GET /api/otaPackages?pageSize={pageSize}&page={page}
+Authorization: Bearer {jwtToken}
+```
+
+<ParamField query="pageSize" type="integer" required>
+  Number of results per page.
+</ParamField>
+
+<ParamField query="page" type="integer" required>
+  Zero-based page index.
+</ParamField>
+
+**Or, filter by device profile and type:**
+
+```http
+GET /api/otaPackages/{deviceProfileId}/{type}?pageSize={pageSize}&page={page}
+Authorization: Bearer {jwtToken}
+```
+
+<ParamField path="deviceProfileId" type="string" required>
+  UUID of the device profile to filter by.
+</ParamField>
+
+<ParamField path="type" type="string" required>
+  `FIRMWARE` or `SOFTWARE`.
+</ParamField>
+
+---
+
+### Delete OTA package
+
+```http
+DELETE /api/otaPackage/{otaPackageId}
+Authorization: Bearer {jwtToken}
+```
+
+<ParamField path="otaPackageId" type="string" required>
+  UUID of the OTA package to delete.
+</ParamField>
+
+<Warning>
+  Deleting a package that is currently assigned to a device profile will interrupt in-progress updates on all devices using that profile.
+</Warning>
+
+---
+
+## Device profile assignment
+
+Assigning a firmware package to a device profile is done via the **Device Profile API** — set the `firmwareId` or `softwareId` field on the profile:
+
+```http
+POST /api/deviceProfile
+Authorization: Bearer {jwtToken}
+Content-Type: application/json
+```
+
+```json
+{
+  "id": { "entityType": "DEVICE_PROFILE", "id": "<profile-uuid>" },
+  "name": "Industrial Sensors",
+  "firmwareId": {
+    "entityType": "OTA_PACKAGE",
+    "id": "<ota-package-uuid>"
+  }
+}
+```
+
+Once assigned, ThingsBoard automatically sets the following **shared attributes** on every device using this profile:
+
+| Attribute key | Value |
+|---------------|-------|
+| `fw_title` | Package `title` |
+| `fw_version` | Package `version` |
+| `fw_size` | Binary size in bytes |
+| `fw_checksum` | Package checksum |
+| `fw_checksum_algorithm` | Hash algorithm used |
+
+For software packages, the corresponding keys are prefixed with `sw_` instead of `fw_`.
+
+---
+
+## Device download flow
+
+After receiving the updated shared attributes, a device that detects a new firmware version should follow this sequence:
+
+<Steps>
+  <Step title="Detect update available">
+    The device reads its `fw_version` shared attribute (via attribute subscription or poll) and compares it to the currently running firmware version. If they differ, an update is available.
+  </Step>
+
+  <Step title="Report DOWNLOADING state">
+    Report progress via telemetry immediately before starting the download:
+    ```bash
+    curl -X POST "https://thingsboard.example.com/api/v1/${ACCESS_TOKEN}/telemetry" \
+      -H "Content-Type: application/json" \
+      -d '{"fw_state": "DOWNLOADING"}'
+    ```
+  </Step>
+
+  <Step title="Download the firmware binary in chunks">
+    Large binaries can be downloaded in chunks to accommodate low-memory devices:
+    ```http
+    GET /api/v1/{accessToken}/firmware?title={title}&version={version}&size={size}&chunk={chunkIndex}
+    ```
+
+    <ParamField query="title" type="string" required>
+      The `fw_title` shared attribute value.
+    </ParamField>
+
+    <ParamField query="version" type="string" required>
+      The `fw_version` shared attribute value.
+    </ParamField>
+
+    <ParamField query="size" type="integer">
+      Chunk size in bytes. ThingsBoard defaults to the full file if omitted.
+    </ParamField>
+
+    <ParamField query="chunk" type="integer">
+      Zero-based chunk index. Increment until the full binary has been received.
+    </ParamField>
+
+    ```bash
+    curl "https://thingsboard.example.com/api/v1/${ACCESS_TOKEN}/firmware?title=MainController+FW&version=2.1.0&size=4096&chunk=0" \
+      -o firmware_chunk_0.bin
+    ```
+  </Step>
+
+  <Step title="Verify checksum">
+    After downloading all chunks, verify the assembled binary against `fw_checksum` using `fw_checksum_algorithm`. If verification fails, report `fw_state: FAILED` and do not apply the update.
+    ```bash
+    curl -X POST "https://thingsboard.example.com/api/v1/${ACCESS_TOKEN}/telemetry" \
+      -H "Content-Type: application/json" \
+      -d '{"fw_state": "VERIFIED"}'
+    ```
+  </Step>
+
+  <Step title="Apply and report result">
+    Apply the firmware update:
+    ```json
+    { "fw_state": "UPDATING" }
+    ```
+    After successful boot with the new firmware, report completion:
+    ```json
+    { "fw_state": "UPDATED", "fw_version": "2.1.0" }
+    ```
+    On failure, report:
+    ```json
+    { "fw_state": "FAILED", "fw_failedReason": "CRC mismatch" }
+    ```
+  </Step>
+</Steps>
+
+---
+
+## OTA progress states
+
+ThingsBoard tracks update progress through the `fw_state` (or `sw_state`) telemetry key:
+
+| State | Meaning |
+|-------|---------|
+| `DOWNLOADING` | Device has started downloading the binary |
+| `DOWNLOADED` | Download complete; verification not yet started |
+| `VERIFIED` | Checksum verified successfully |
+| `UPDATING` | Device is applying the update (writing flash, etc.) |
+| `UPDATED` | Update applied successfully; device running new version |
+| `FAILED` | Update failed at some stage; check `fw_failedReason` for details |
+
+---
+
+## LwM2M firmware updates
+
+For LwM2M-connected devices, ThingsBoard uses the **OMA LwM2M Firmware Update Object (Object ID: 5)** for firmware delivery. The platform pushes the binary via LwM2M BLOCK transfer, then triggers the Update resource. Software updates use **Object ID: 9** (Software Management Object). No custom HTTP download code is needed on LwM2M devices.
+
+---
+
+## Error codes
+
+| HTTP Status | Meaning |
+|-------------|---------|
+| `200 OK` | Package created, uploaded, or retrieved successfully |
+| `400 Bad Request` | Missing required fields (`title`, `version`, `type`) or invalid binary |
+| `401 Unauthorized` | Missing or expired JWT token |
+| `403 Forbidden` | Insufficient role — only Tenant Administrators can manage OTA packages |
+| `404 Not Found` | Package UUID or device profile does not exist |

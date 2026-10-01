@@ -1,0 +1,182 @@
+---
+title: "Connect SNMP Devices to ThingsBoard"
+sidebarTitle: "SNMP"
+description: "ThingsBoard can poll SNMP-enabled devices or receive SNMP traps to collect telemetry from network equipment, industrial controllers, and legacy systems."
+---
+
+SNMP (Simple Network Management Protocol) is the de-facto standard for monitoring and managing network-attached devices. ThingsBoard's SNMP transport enables integration with routers, switches, industrial controllers, UPS systems, environmental sensors, and legacy equipment that speaks SNMP but cannot run a modern IoT agent. ThingsBoard acts as an SNMP manager: it can periodically poll devices using GET requests and receive unsolicited TRAP/INFORM notifications from devices. All collected values are mapped to ThingsBoard telemetry keys and attributes through a device profile configuration.
+
+## SNMP Versions Supported
+
+| Version | Auth | Privacy | Notes |
+|---------|------|---------|-------|
+| **v1** | Community string | None | Legacy; avoid on untrusted networks |
+| **v2c** | Community string | None | Most common; default in ThingsBoard |
+| **v3** | Username + auth protocol | Encryption | Recommended for production |
+
+The protocol version, community string (v1/v2c), or USM credentials (v3) are configured per-device in ThingsBoard device credentials.
+
+## Data Collection Modes
+
+ThingsBoard supports two complementary data collection strategies that can be used simultaneously:
+
+<CardGroup cols={2}>
+  <Card title="SNMP Polling" icon="rotate">
+    ThingsBoard initiates periodic SNMP GET requests to the device on a configured interval. Suitable for metrics like CPU load, interface counters, and sensor readings that change continuously.
+  </Card>
+  <Card title="SNMP Traps" icon="bell">
+    The device sends unsolicited TRAP or INFORM PDUs to ThingsBoard when specific events occur (link up/down, threshold exceeded, fan failure). ThingsBoard listens on a configurable UDP port.
+  </Card>
+</CardGroup>
+
+## Device Configuration
+
+Each SNMP device in ThingsBoard is configured with connection parameters in the **Device** credentials section:
+
+```json
+{
+  "type": "SNMP",
+  "host": "192.168.1.100",
+  "port": 161,
+  "protocolVersion": "V2C",
+  "community": "public"
+}
+```
+
+For SNMPv3, replace `community` with the USM security parameters (see below).
+
+## Device Profile SNMP Configuration
+
+The **Device Profile** maps OIDs to ThingsBoard telemetry keys, defines the polling frequency, and specifies what type of data each query produces. Multiple communication configs can coexist in one profile.
+
+```json
+{
+  "transportConfiguration": {
+    "type": "SNMP",
+    "timeoutMs": 500,
+    "retries": 3,
+    "communicationConfigs": [
+      {
+        "spec": "telemetryQuerying",
+        "queryingFrequencyMs": 10000,
+        "mappings": [
+          {
+            "oid": "1.3.6.1.2.1.25.3.3.1.2.1",
+            "key": "cpuLoad",
+            "dataType": "LONG"
+          },
+          {
+            "oid": "1.3.6.1.2.1.25.2.3.1.6.1",
+            "key": "usedMemory",
+            "dataType": "LONG"
+          }
+        ]
+      },
+      {
+        "spec": "clientAttributesQuerying",
+        "queryingFrequencyMs": 60000,
+        "mappings": [
+          {
+            "oid": "1.3.6.1.2.1.1.1.0",
+            "key": "sysDescr",
+            "dataType": "STRING"
+          },
+          {
+            "oid": "1.3.6.1.2.1.1.5.0",
+            "key": "sysName",
+            "dataType": "STRING"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+### Communication Spec Types
+
+| Spec | Description |
+|------|-------------|
+| `telemetryQuerying` | Periodic GET; results stored as time-series telemetry |
+| `clientAttributesQuerying` | Periodic GET; results stored as client attributes |
+| `sharedAttributesSetting` | SNMP SET triggered when a shared attribute changes in ThingsBoard |
+| `toDeviceRpcRequest` | SNMP SET triggered by a server-side RPC call |
+| `toServerRpcRequest` | Processed when the device sends a TRAP/INFORM |
+
+### OID Mapping Fields
+
+| Field | Required | Description |
+|-------|:--------:|-------------|
+| `oid` | ✅ | Dotted-decimal OID string, e.g., `1.3.6.1.2.1.1.1.0` |
+| `key` | ✅ | ThingsBoard telemetry or attribute key name |
+| `dataType` | ✅ | `STRING`, `LONG`, `DOUBLE`, `BOOLEAN`, or `JSON` |
+
+## SNMPv3 Security
+
+SNMPv3 provides authentication and privacy (encryption) through the User Security Model (USM). Configure the following fields in device credentials when using `V3`:
+
+```json
+{
+  "type": "SNMP",
+  "host": "192.168.1.100",
+  "port": 161,
+  "protocolVersion": "V3",
+  "username": "snmpv3user",
+  "securityName": "snmpv3user",
+  "contextName": "",
+  "authenticationProtocol": "SHA_256",
+  "authenticationPassphrase": "authPassphrase123!",
+  "privacyProtocol": "AES_128",
+  "privacyPassphrase": "privPassphrase456!",
+  "engineId": ""
+}
+```
+
+### Authentication Protocols
+
+| Protocol | OID |
+|----------|-----|
+| `MD5` | `1.3.6.1.6.3.10.1.1.2` |
+| `SHA_1` | `1.3.6.1.6.3.10.1.1.3` |
+| `SHA_224` | `1.3.6.1.6.3.10.1.1.4` |
+| `SHA_256` | `1.3.6.1.6.3.10.1.1.5` |
+| `SHA_384` | `1.3.6.1.6.3.10.1.1.6` |
+| `SHA_512` | `1.3.6.1.6.3.10.1.1.7` |
+
+### Privacy (Encryption) Protocols
+
+| Protocol | OID |
+|----------|-----|
+| `DES` | `1.3.6.1.6.3.10.1.2.2` |
+| `AES_128` | `1.3.6.1.6.3.10.1.2.4` |
+| `AES_192` | `1.3.6.1.4.1.4976.2.2.1.1.1` |
+| `AES_256` | `1.3.6.1.4.1.4976.2.2.1.1.2` |
+
+<Warning>
+  `MD5` and `DES` are considered cryptographically weak. Prefer `SHA_256` or higher for authentication and `AES_128` or higher for privacy in new deployments.
+</Warning>
+
+## SNMP Trap Reception
+
+To receive SNMP traps, ensure the ThingsBoard SNMP transport is enabled and bound to a UDP port. The default bind port is configured via the `SNMP_BIND_PORT` environment variable (set to `0` by default, which means traps are not enabled until explicitly configured).
+
+When a TRAP PDU arrives, ThingsBoard matches the source IP address to a registered SNMP device, maps the variable bindings (OID → value pairs) using the device profile `toServerRpcRequest` communication config, and processes them through the rule engine.
+
+## Common OID Quick Reference
+
+A selection of frequently used standard OIDs:
+
+| OID | MIB Name | Description |
+|-----|----------|-------------|
+| `1.3.6.1.2.1.1.1.0` | `sysDescr` | System description string |
+| `1.3.6.1.2.1.1.3.0` | `sysUpTime` | System uptime in timeticks |
+| `1.3.6.1.2.1.1.5.0` | `sysName` | Configured system hostname |
+| `1.3.6.1.2.1.25.3.3.1.2.1` | `hrProcessorLoad` | CPU load percentage |
+| `1.3.6.1.2.1.25.2.3.1.5.1` | `hrStorageSize` | Total storage size |
+| `1.3.6.1.2.1.25.2.3.1.6.1` | `hrStorageUsed` | Used storage |
+| `1.3.6.1.2.1.2.2.1.10.2` | `ifInOctets` | Inbound octets on interface 2 |
+| `1.3.6.1.2.1.2.2.1.16.2` | `ifOutOctets` | Outbound octets on interface 2 |
+
+<Note>
+  SNMP is best suited for **network equipment** (routers, switches, firewalls), **industrial controllers** (PLCs, RTUs), **UPS systems**, and **legacy hardware** that cannot run newer IoT transport stacks. For new IoT device designs, prefer MQTT or CoAP — both offer lower overhead and richer ThingsBoard integration including bidirectional RPC and real-time attribute push.
+</Note>

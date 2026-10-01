@@ -1,0 +1,308 @@
+---
+title: "REST API Endpoints for Rule Chain Management in ThingsBoard"
+sidebarTitle: "Rule Chains"
+description: "Manage ThingsBoard rule chains via REST API. Create, update, set as root, and query rule chains. Import and export chain configurations as JSON."
+---
+
+Rule chains are the event processing backbone of ThingsBoard. Each chain is a directed graph of **rule nodes** connected by labeled relations (e.g., `Success`, `Failure`, `True`, `False`). When a device sends telemetry, publishes attributes, or triggers an alarm, the message flows through the root rule chain — and potentially into linked sub-chains — where nodes filter, transform, enrich, and route data to external systems, alarms, and downstream services.
+
+The Rule Chain API lets you programmatically manage these chains: create them, inspect or update their node configurations, designate which chain is the global root, and import/export chains as portable JSON files for deployment pipelines.
+
+<Note>
+  Rule chain **metadata** (the node graph) is a complex JSON structure. For most use cases, design rule chains interactively in the ThingsBoard UI Rule Chain Editor, then use the export/import endpoints to move configurations between environments (e.g., staging → production).
+</Note>
+
+---
+
+## Rule chain object
+
+<ResponseField name="id" type="object">
+  Unique identifier. Contains `entityType: "RULE_CHAIN"` and a UUID `id`.
+</ResponseField>
+
+<ResponseField name="name" type="string" required>
+  Human-readable name (e.g., `"Main Telemetry Processing"`).
+</ResponseField>
+
+<ResponseField name="tenantId" type="object">
+  Tenant that owns this rule chain.
+</ResponseField>
+
+<ResponseField name="root" type="boolean">
+  If `true`, this is the tenant's active root rule chain — all device messages enter here first.
+</ResponseField>
+
+<ResponseField name="debugMode" type="boolean">
+  When `true`, each node emits debug events visible in the rule chain editor. Disable in production to reduce overhead.
+</ResponseField>
+
+<ResponseField name="configuration" type="object">
+  Optional chain-level JSON configuration (rarely needed; most config lives in metadata).
+</ResponseField>
+
+---
+
+## Rule chain metadata
+
+Metadata is the node-level configuration retrieved and saved separately from the rule chain header. It contains:
+
+<ResponseField name="ruleChainId" type="object">
+  Reference back to the parent rule chain.
+</ResponseField>
+
+<ResponseField name="nodes" type="array">
+  Array of rule node objects. Each node has a `type` (e.g., `"org.thingsboard.rule.engine.filter.TbMsgTypeSwitchNode"`), a `name`, `debugMode`, and a `configuration` object specific to the node type.
+
+  <Expandable title="Example node">
+    ```json
+    {
+      "id": { "entityType": "RULE_NODE", "id": "b1e2d3f4-..." },
+      "type": "org.thingsboard.rule.engine.filter.TbMsgTypeFilterNode",
+      "name": "Filter Telemetry",
+      "debugMode": false,
+      "configuration": {
+        "messageTypes": ["POST_TELEMETRY_REQUEST"]
+      }
+    }
+    ```
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="connections" type="array">
+  Array of directed edges between nodes. Each connection defines a `fromIndex`, `toIndex` (positions in the `nodes` array), and a `type` label (e.g., `"True"`, `"False"`, `"Success"`, `"Failure"`).
+</ResponseField>
+
+<ResponseField name="firstNodeIndex" type="integer">
+  Index into the `nodes` array identifying which node receives messages first.
+</ResponseField>
+
+---
+
+## Endpoints
+
+### Create or update a rule chain
+
+Omit `id` to create a new chain; include an existing `id` to update its header fields (`name`, `debugMode`). Node configuration is saved separately via the metadata endpoint.
+
+```http
+POST /api/ruleChain
+Authorization: Bearer {jwtToken}
+Content-Type: application/json
+```
+
+**Request body**
+
+```json
+{
+  "name": "Smart Meter Processing",
+  "debugMode": false,
+  "configuration": null
+}
+```
+
+**Response** — the saved rule chain object with its generated `id`.
+
+---
+
+### Get rule chain by ID
+
+```http
+GET /api/ruleChain/{ruleChainId}
+Authorization: Bearer {jwtToken}
+```
+
+<ParamField path="ruleChainId" type="string" required>
+  UUID of the rule chain.
+</ParamField>
+
+---
+
+### Get rule chain metadata (node graph)
+
+Returns the full node configuration for a rule chain — all nodes with their settings and the edges between them.
+
+```http
+GET /api/ruleChain/{ruleChainId}/metadata
+Authorization: Bearer {jwtToken}
+```
+
+<ParamField path="ruleChainId" type="string" required>
+  UUID of the rule chain whose node graph to retrieve.
+</ParamField>
+
+**Example response**
+
+```json
+{
+  "ruleChainId": { "entityType": "RULE_CHAIN", "id": "3fa85f64-..." },
+  "nodes": [
+    {
+      "id": { "entityType": "RULE_NODE", "id": "aaa-..." },
+      "type": "org.thingsboard.rule.engine.filter.TbMsgTypeFilterNode",
+      "name": "Filter Telemetry",
+      "debugMode": false,
+      "configuration": { "messageTypes": ["POST_TELEMETRY_REQUEST"] }
+    },
+    {
+      "id": { "entityType": "RULE_NODE", "id": "bbb-..." },
+      "type": "org.thingsboard.rule.engine.telemetry.TbMsgTimeseriesNode",
+      "name": "Save Timeseries",
+      "debugMode": false,
+      "configuration": { "defaultTTL": 0 }
+    }
+  ],
+  "connections": [
+    { "fromIndex": 0, "toIndex": 1, "type": "True" }
+  ],
+  "firstNodeIndex": 0
+}
+```
+
+---
+
+### Save rule chain metadata
+
+Replaces the node graph for a rule chain. Use this to update node configurations or rewire connections.
+
+```http
+POST /api/ruleChain/metadata
+Authorization: Bearer {jwtToken}
+Content-Type: application/json
+```
+
+The request body follows the same structure as the metadata response above. Include the `ruleChainId` to target the correct chain.
+
+---
+
+### Delete rule chain
+
+<Warning>
+  You cannot delete the active **root** rule chain. Set another chain as root first. Deleting a sub-chain that is referenced by other chains via a **Rule Chain** node may break those chains silently — update the referencing nodes before deletion.
+</Warning>
+
+```http
+DELETE /api/ruleChain/{ruleChainId}
+Authorization: Bearer {jwtToken}
+```
+
+<ParamField path="ruleChainId" type="string" required>
+  UUID of the rule chain to delete.
+</ParamField>
+
+---
+
+### List rule chains
+
+Returns a paginated list of all rule chains for the current tenant.
+
+```http
+GET /api/ruleChains?pageSize={pageSize}&page={page}
+Authorization: Bearer {jwtToken}
+```
+
+<ParamField query="pageSize" type="integer" required>
+  Number of results per page.
+</ParamField>
+
+<ParamField query="page" type="integer" required>
+  Zero-based page index.
+</ParamField>
+
+<ParamField query="type" type="string">
+  Filter by type. Use `CORE` for standard chains or `EDGE` for Edge-specific chains.
+</ParamField>
+
+<ParamField query="textSearch" type="string">
+  Optional substring filter on the rule chain name.
+</ParamField>
+
+---
+
+### Set root rule chain
+
+Designates a rule chain as the tenant's root chain. All device messages will be routed to this chain first.
+
+```http
+POST /api/ruleChain/{ruleChainId}/root
+Authorization: Bearer {jwtToken}
+```
+
+<ParamField path="ruleChainId" type="string" required>
+  UUID of the rule chain to promote to root.
+</ParamField>
+
+---
+
+### Export all rule chains
+
+Exports all tenant rule chains as a single portable JSON document. Useful for backups and environment migrations.
+
+```http
+GET /api/ruleChains/export?limit={limit}
+Authorization: Bearer {jwtToken}
+```
+
+<ParamField query="limit" type="integer" required>
+  Maximum number of rule chains to include in the export.
+</ParamField>
+
+**Response** — a JSON object containing a `ruleChains` array (chain headers) and a `metadata` array (node graphs), suitable for re-import.
+
+---
+
+### Import rule chains
+
+Imports rule chains from a previously exported JSON document, creating or updating chains as needed.
+
+```http
+POST /api/ruleChains/import?overwrite={true|false}
+Authorization: Bearer {jwtToken}
+Content-Type: application/json
+```
+
+<ParamField query="overwrite" type="boolean">
+  If `true`, existing chains with matching names are overwritten. Default: `false`.
+</ParamField>
+
+The request body should be the JSON exported by the export endpoint above.
+
+---
+
+## Full example: deploy a rule chain to production
+
+<Steps>
+  <Step title="Export from staging">
+    ```bash
+    curl "https://staging.thingsboard.example.com/api/ruleChains/export?limit=100" \
+      -H "Authorization: Bearer $STAGING_JWT" \
+      -o rule_chains_export.json
+    ```
+  </Step>
+
+  <Step title="Import to production">
+    ```bash
+    curl -X POST "https://prod.thingsboard.example.com/api/ruleChains/import?overwrite=true" \
+      -H "Authorization: Bearer $PROD_JWT" \
+      -H "Content-Type: application/json" \
+      -d @rule_chains_export.json
+    ```
+  </Step>
+
+  <Step title="Set the root chain">
+    ```bash
+    curl -X POST "https://prod.thingsboard.example.com/api/ruleChain/${ROOT_CHAIN_ID}/root" \
+      -H "Authorization: Bearer $PROD_JWT"
+    ```
+  </Step>
+</Steps>
+
+---
+
+## Error codes
+
+| HTTP Status | Meaning |
+|-------------|---------|
+| `400 Bad Request` | Missing `name`, invalid node type, or malformed metadata |
+| `401 Unauthorized` | Missing or expired JWT token |
+| `403 Forbidden` | Attempting to delete the active root chain, or insufficient role |
+| `404 Not Found` | Rule chain UUID does not exist |

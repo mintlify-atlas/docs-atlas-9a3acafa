@@ -1,0 +1,301 @@
+---
+title: "REST API Endpoints for ThingsBoard Entity Relations"
+sidebarTitle: "Relations"
+description: "Entity relations create typed, directional links between ThingsBoard entities. Use them to model device-asset hierarchies, container relationships, and custom topologies."
+---
+
+Entity relations are typed, directional edges that connect any two ThingsBoard entities — devices, assets, customers, tenants, dashboards, entity views, users, or edges. Relations allow you to represent rich real-world structures: a building that *contains* many floors, a fleet that *manages* several vehicles, a gateway that *uses* downstream sensors. The rule engine's enrichment nodes can traverse these graphs at runtime, enabling rule chains to look up parent assets, resolve customer context, or aggregate data across an entire topology.
+
+Every relation has a direction (`from` → `to`), a string `type` that you choose freely, and a `typeGroup` that separates system-managed relations from user-created ones. The vast majority of custom relations use `typeGroup: "COMMON"`.
+
+All relation endpoints require a valid JWT bearer token. Security checks verify that the authenticated user has the appropriate READ or WRITE permission for both the `from` and `to` entities.
+
+## Relation object
+
+<ResponseField name="from" type="object" required>
+  Entity identifier of the source entity. An object with `entityType` (e.g., `"ASSET"`) and `id` (UUID string) fields.
+</ResponseField>
+
+<ResponseField name="to" type="object" required>
+  Entity identifier of the target entity. Same structure as `from`.
+</ResponseField>
+
+<ResponseField name="type" type="string" required>
+  Free-form string that names the relationship. ThingsBoard provides built-in constants such as `"Contains"`, `"Manages"`, and `"Uses"`, but any non-empty string up to 255 characters is valid.
+</ResponseField>
+
+<ResponseField name="typeGroup" type="string" required>
+  Categorises the relation. Use `"COMMON"` for all custom relations. The platform uses other groups (`RULE_CHAIN`, `ALARM`, etc.) internally.
+</ResponseField>
+
+<ResponseField name="additionalInfo" type="object">
+  Optional JSON object for attaching metadata to the relation itself (e.g., timestamps, weight, confidence scores).
+</ResponseField>
+
+---
+
+## Common relation types
+
+ThingsBoard defines several built-in relation type constants that have special meaning in default rule chain nodes and widgets:
+
+| Type string | Typical usage |
+|---|---|
+| `Contains` | Parent entity physically or logically contains the child (building → floor → device) |
+| `Manages` | One entity is responsible for or supervises another (manager → team, gateway → sensor) |
+| `Uses` | An entity depends on or consumes another entity |
+| `ManagedByEdge` | System-generated; marks entities managed by a ThingsBoard Edge instance |
+| `ManagedByIntegration` | System-generated; marks entities created by an integration |
+
+You can define any additional type strings for your domain model without any platform configuration.
+
+---
+
+## Endpoints
+
+### Create or update a relation
+
+<ResponseField name="POST /api/v2/relation" type="endpoint" />
+
+Creates a new relation or updates an existing one. The uniqueness key is the combination of `from`, `to`, `type`, and `typeGroup`. Submitting the same combination twice updates the `additionalInfo` rather than creating a duplicate. Returns the saved relation object.
+
+<CodeGroup>
+```bash Create a Contains relation
+curl -X POST 'http://localhost:8080/api/v2/relation' \
+  -H 'Authorization: Bearer $TOKEN' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "from": {"entityType": "ASSET",  "id": "a3d40b30-42b6-11ef-9e02-0050568351c8"},
+    "to":   {"entityType": "DEVICE", "id": "784f394c-42b6-11ef-9e02-0050568351c8"},
+    "type": "Contains",
+    "typeGroup": "COMMON"
+  }'
+```
+
+```json Response
+{
+  "from": {"entityType": "ASSET",  "id": "a3d40b30-42b6-11ef-9e02-0050568351c8"},
+  "to":   {"entityType": "DEVICE", "id": "784f394c-42b6-11ef-9e02-0050568351c8"},
+  "type": "Contains",
+  "typeGroup": "COMMON",
+  "additionalInfo": null
+}
+```
+</CodeGroup>
+
+The request body for a `Contains` relation linking a device to an asset:
+
+```json
+{
+  "from": {"entityType": "ASSET", "id": "{assetId}"},
+  "to": {"entityType": "DEVICE", "id": "{deviceId}"},
+  "type": "Contains",
+  "typeGroup": "COMMON"
+}
+```
+
+---
+
+### Get a specific relation
+
+<ResponseField name="GET /api/relation" type="endpoint" />
+
+Returns a single relation object between two specific entities. All five query parameters are required. Returns `404 Not Found` if no matching relation exists.
+
+<ParamField query="fromId" type="string" required>
+  UUID of the source entity.
+</ParamField>
+
+<ParamField query="fromType" type="string" required>
+  Entity type of the source entity (e.g., `ASSET`, `DEVICE`, `CUSTOMER`).
+</ParamField>
+
+<ParamField query="relationType" type="string" required>
+  The relation type string (e.g., `Contains`).
+</ParamField>
+
+<ParamField query="toId" type="string" required>
+  UUID of the target entity.
+</ParamField>
+
+<ParamField query="toType" type="string" required>
+  Entity type of the target entity.
+</ParamField>
+
+<ParamField query="relationTypeGroup" type="string">
+  Relation type group. Defaults to `COMMON` when omitted.
+</ParamField>
+
+```bash
+curl -X GET 'http://localhost:8080/api/relation?fromId=a3d40b30-42b6-11ef-9e02-0050568351c8&fromType=ASSET&relationType=Contains&toId=784f394c-42b6-11ef-9e02-0050568351c8&toType=DEVICE' \
+  -H 'Authorization: Bearer $TOKEN'
+```
+
+---
+
+### Delete a specific relation
+
+<ResponseField name="DELETE /api/v2/relation" type="endpoint" />
+
+Deletes the single relation matching all supplied parameters. Returns the deleted relation object.
+
+<ParamField query="fromId" type="string" required>
+  UUID of the source entity.
+</ParamField>
+
+<ParamField query="fromType" type="string" required>
+  Entity type of the source entity.
+</ParamField>
+
+<ParamField query="relationType" type="string" required>
+  The relation type string.
+</ParamField>
+
+<ParamField query="toId" type="string" required>
+  UUID of the target entity.
+</ParamField>
+
+<ParamField query="toType" type="string" required>
+  Entity type of the target entity.
+</ParamField>
+
+```bash
+curl -X DELETE 'http://localhost:8080/api/v2/relation?fromId=a3d40b30-42b6-11ef-9e02-0050568351c8&fromType=ASSET&relationType=Contains&toId=784f394c-42b6-11ef-9e02-0050568351c8&toType=DEVICE' \
+  -H 'Authorization: Bearer $TOKEN'
+```
+
+---
+
+### Delete all common relations for an entity
+
+<ResponseField name="DELETE /api/relations" type="endpoint" />
+
+Deletes every `COMMON`-group relation in both directions (from and to) for the specified entity. Useful for cleanly de-registering an entity before deletion.
+
+<ParamField query="entityId" type="string" required>
+  UUID of the entity whose relations should be deleted.
+</ParamField>
+
+<ParamField query="entityType" type="string" required>
+  Type of the entity (e.g., `DEVICE`, `ASSET`).
+</ParamField>
+
+```bash
+curl -X DELETE 'http://localhost:8080/api/relations?entityId=784f394c-42b6-11ef-9e02-0050568351c8&entityType=DEVICE' \
+  -H 'Authorization: Bearer $TOKEN'
+```
+
+---
+
+### Get all relations FROM an entity
+
+<ResponseField name="GET /api/relations/from/{fromType}/{fromId}" type="endpoint" />
+
+Returns a list of all relations where the specified entity is the source (`from`). Use this to discover which entities a given entity *contains*, *manages*, or otherwise points to.
+
+<ParamField path="fromType" type="string" required>
+  Entity type of the source (e.g., `ASSET`).
+</ParamField>
+
+<ParamField path="fromId" type="string" required>
+  UUID of the source entity.
+</ParamField>
+
+<ParamField query="relationTypeGroup" type="string">
+  Optionally restrict to a specific type group. Defaults to `COMMON`.
+</ParamField>
+
+```bash
+curl -X GET 'http://localhost:8080/api/relations/from/ASSET/a3d40b30-42b6-11ef-9e02-0050568351c8' \
+  -H 'Authorization: Bearer $TOKEN'
+```
+
+---
+
+### Get all relations TO an entity
+
+<ResponseField name="GET /api/relations/to/{toType}/{toId}" type="endpoint" />
+
+Returns a list of all relations where the specified entity is the target (`to`). Use this to find which parent entities reference a given device, asset, or other entity.
+
+<ParamField path="toType" type="string" required>
+  Entity type of the target (e.g., `DEVICE`).
+</ParamField>
+
+<ParamField path="toId" type="string" required>
+  UUID of the target entity.
+</ParamField>
+
+```bash
+curl -X GET 'http://localhost:8080/api/relations/to/DEVICE/784f394c-42b6-11ef-9e02-0050568351c8' \
+  -H 'Authorization: Bearer $TOKEN'
+```
+
+---
+
+### Find related entities by graph query
+
+<ResponseField name="POST /api/relations" type="endpoint" />
+
+Executes a structured graph traversal query starting from a root entity and following relations matching the specified filters. Returns all matching entity IDs and types discovered within the specified depth.
+
+```bash
+curl -X POST 'http://localhost:8080/api/relations' \
+  -H 'Authorization: Bearer $TOKEN' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "parameters": {
+      "rootId": "a3d40b30-42b6-11ef-9e02-0050568351c8",
+      "rootType": "ASSET",
+      "direction": "FROM",
+      "relationTypeGroup": "COMMON",
+      "maxLevel": 3,
+      "fetchLastLevelOnly": false
+    },
+    "filters": [
+      {
+        "relationType": "Contains",
+        "entityTypes": ["DEVICE", "ASSET"]
+      }
+    ]
+  }'
+```
+
+---
+
+### Find related entity infos
+
+<ResponseField name="POST /api/relations/info" type="endpoint" />
+
+Identical to the graph query above, but each returned entity includes full name and type display information rather than just IDs. Useful for rendering relation trees in a UI.
+
+---
+
+## Example: model a multi-level hierarchy
+
+The following JSON snippets show how to represent a `Factory` → `Production Line` → `Machine` hierarchy where each level `Contains` the next.
+
+<CodeGroup>
+```json Factory contains Production Line
+{
+  "from": {"entityType": "ASSET", "id": "{factoryAssetId}"},
+  "to":   {"entityType": "ASSET", "id": "{productionLineAssetId}"},
+  "type": "Contains",
+  "typeGroup": "COMMON"
+}
+```
+
+```json Production Line contains Machine device
+{
+  "from": {"entityType": "ASSET",  "id": "{productionLineAssetId}"},
+  "to":   {"entityType": "DEVICE", "id": "{machineDeviceId}"},
+  "type": "Contains",
+  "typeGroup": "COMMON"
+}
+```
+</CodeGroup>
+
+Once these relations exist, a rule chain enrichment node configured to traverse `FROM` / `Contains` / max depth `2` starting at the factory asset will resolve all production lines and machines in a single step.
+
+<Note>
+The rule engine's **Related Entity Data** node and **Originator Attributes** node both use entity relations to enrich messages with data from parent or sibling entities. For example, when a machine sends a temperature alarm, the enrichment node can traverse a `Contains` relation upward to find the production line asset and attach its `location` attribute to the alarm. Designing a clean relation graph early in your project pays dividends across dashboards, rule chains, and API queries.
+</Note>

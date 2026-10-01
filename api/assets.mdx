@@ -1,0 +1,294 @@
+---
+title: "REST API Endpoints for ThingsBoard Asset Management"
+sidebarTitle: "Assets"
+description: "Manage assets — logical entities like buildings, machines, and fleets — via the ThingsBoard REST API. Create, query, assign to customers, and relate to devices."
+---
+
+Assets are the logical, non-physical entities in ThingsBoard — buildings, floors, rooms, machines, production lines, fleets, or any other concept that groups or contextualises physical devices. Unlike devices, assets do not connect to the platform directly; instead they receive telemetry and attributes from devices via rule chains, and they participate in entity hierarchies through [entity relations](/api/entity-relations). Assets follow the same ownership model as devices: they belong to a tenant and can be assigned to a customer.
+
+All asset endpoints require a valid JWT bearer token. Tenant administrators can manage all assets in their tenant; customer users can only access assets assigned to their customer.
+
+## Asset object
+
+<ResponseField name="id" type="object">
+  Unique asset identifier. Contains an `entityType` field set to `"ASSET"` and an `id` field with the UUID string.
+</ResponseField>
+
+<ResponseField name="name" type="string" required>
+  Human-readable asset name. Must be unique within the tenant scope.
+</ResponseField>
+
+<ResponseField name="type" type="string">
+  Legacy asset type string. Superseded by `assetProfileId` but still accepted for backwards compatibility. Use meaningful values like `"building"`, `"machine"`, or `"fleet"`.
+</ResponseField>
+
+<ResponseField name="label" type="string">
+  Optional free-form label for display in dashboards and widgets. Does not have to be unique.
+</ResponseField>
+
+<ResponseField name="tenantId" type="object">
+  Identifier of the tenant that owns this asset. Set automatically by the platform on creation.
+</ResponseField>
+
+<ResponseField name="customerId" type="object">
+  Identifier of the customer this asset is assigned to. `null` when the asset is not assigned to any customer.
+</ResponseField>
+
+<ResponseField name="assetProfileId" type="object">
+  Reference to the asset profile that controls default rule chains and data validation for this asset.
+</ResponseField>
+
+<ResponseField name="createdTime" type="long">
+  Unix epoch timestamp (milliseconds) recording when the asset was first created.
+</ResponseField>
+
+<ResponseField name="additionalInfo" type="object">
+  Arbitrary JSON object for storing custom metadata such as geographic coordinates, description, or external system identifiers.
+</ResponseField>
+
+---
+
+## Endpoints
+
+### Create or update an asset
+
+<ResponseField name="POST /api/asset" type="endpoint" />
+
+Creates a new asset when no `id` is supplied in the request body, or updates an existing asset when a valid `id` is provided. Asset names must be unique per tenant. Referencing a non-existent `id` returns `404 Not Found`. Remove the `id`, `tenantId`, and optionally `customerId` fields from the body to create a brand-new asset.
+
+**Query parameters**
+
+<ParamField query="nameConflictPolicy" type="string" default="FAIL">
+  How to handle a name collision: `FAIL` (default), `RENAME`, or `IGNORE`.
+</ParamField>
+
+<CodeGroup>
+```bash Create an asset
+curl -X POST 'http://localhost:8080/api/asset' \
+  -H 'Authorization: Bearer $TOKEN' \
+  -H 'Content-Type: application/json' \
+  -d '{"name": "Building-A", "type": "building"}'
+```
+
+```bash Update an existing asset
+curl -X POST 'http://localhost:8080/api/asset' \
+  -H 'Authorization: Bearer $TOKEN' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "id": {"entityType": "ASSET", "id": "a3d40b30-42b6-11ef-9e02-0050568351c8"},
+    "name": "Building-A (HQ)",
+    "type": "building",
+    "label": "Headquarters"
+  }'
+```
+
+```json Response
+{
+  "id": {"entityType": "ASSET", "id": "a3d40b30-42b6-11ef-9e02-0050568351c8"},
+  "createdTime": 1720000000000,
+  "tenantId": {"entityType": "TENANT", "id": "af9f9b6e-41e7-11ef-9e02-0050568351c8"},
+  "customerId": null,
+  "name": "Building-A",
+  "type": "building",
+  "label": null,
+  "assetProfileId": {"entityType": "ASSET_PROFILE", "id": "00000000-0000-0000-0000-000000000002"},
+  "additionalInfo": null
+}
+```
+</CodeGroup>
+
+---
+
+### Get an asset by ID
+
+<ResponseField name="GET /api/asset/{assetId}" type="endpoint" />
+
+Returns the full asset object for the given asset UUID. Tenant admins can retrieve any asset in their tenant; customer users can only retrieve assets assigned to their customer.
+
+<ParamField path="assetId" type="string" required>
+  UUID of the asset to retrieve.
+</ParamField>
+
+```bash
+curl -X GET 'http://localhost:8080/api/asset/a3d40b30-42b6-11ef-9e02-0050568351c8' \
+  -H 'Authorization: Bearer $TOKEN'
+```
+
+---
+
+### Get asset info by ID
+
+<ResponseField name="GET /api/asset/info/{assetId}" type="endpoint" />
+
+Returns the extended `AssetInfo` object, which includes derived fields such as `assetProfileName` and `customerTitle`. Useful when rendering asset detail panels in a UI without additional lookups.
+
+<ParamField path="assetId" type="string" required>
+  UUID of the asset.
+</ParamField>
+
+---
+
+### Delete an asset
+
+<ResponseField name="DELETE /api/asset/{assetId}" type="endpoint" />
+
+Permanently deletes the asset, all its stored attributes, and all entity relations that reference it. This action cannot be undone.
+
+<ParamField path="assetId" type="string" required>
+  UUID of the asset to delete.
+</ParamField>
+
+```bash
+curl -X DELETE 'http://localhost:8080/api/asset/a3d40b30-42b6-11ef-9e02-0050568351c8' \
+  -H 'Authorization: Bearer $TOKEN'
+```
+
+---
+
+### List tenant assets
+
+<ResponseField name="GET /api/tenant/assets" type="endpoint" />
+
+Returns a paginated list of all assets belonging to the current tenant. Supports filtering by legacy type string and free-text search over asset names.
+
+<ParamField query="pageSize" type="integer" required>
+  Number of records to return per page.
+</ParamField>
+
+<ParamField query="page" type="integer" required>
+  Zero-based page index.
+</ParamField>
+
+<ParamField query="type" type="string">
+  Filter by legacy asset type string (e.g., `"building"`, `"machine"`).
+</ParamField>
+
+<ParamField query="textSearch" type="string">
+  Partial match filter applied to asset names.
+</ParamField>
+
+<ParamField query="sortProperty" type="string">
+  Field to sort by. Allowed values: `createdTime`, `name`, `assetProfileName`, `label`, `customerTitle`.
+</ParamField>
+
+<ParamField query="sortOrder" type="string">
+  Sort direction: `ASC` or `DESC`.
+</ParamField>
+
+```bash
+curl -X GET 'http://localhost:8080/api/tenant/assets?pageSize=20&page=0&type=building&sortProperty=name&sortOrder=ASC' \
+  -H 'Authorization: Bearer $TOKEN'
+```
+
+---
+
+### List customer assets
+
+<ResponseField name="GET /api/customer/{customerId}/assets" type="endpoint" />
+
+Returns a paginated list of assets assigned to the specified customer. Accessible by both tenant admins and the customer's own users.
+
+<ParamField path="customerId" type="string" required>
+  UUID of the customer whose assets you want to list.
+</ParamField>
+
+<ParamField query="pageSize" type="integer" required>
+  Number of records per page.
+</ParamField>
+
+<ParamField query="page" type="integer" required>
+  Zero-based page index.
+</ParamField>
+
+```bash
+curl -X GET 'http://localhost:8080/api/customer/cust-uuid-here/assets?pageSize=50&page=0' \
+  -H 'Authorization: Bearer $TOKEN'
+```
+
+---
+
+### Assign an asset to a customer
+
+<ResponseField name="POST /api/customer/{customerId}/asset/{assetId}" type="endpoint" />
+
+Assigns the asset to the specified customer, making it visible and manageable by that customer's users.
+
+<ParamField path="customerId" type="string" required>
+  UUID of the target customer.
+</ParamField>
+
+<ParamField path="assetId" type="string" required>
+  UUID of the asset to assign.
+</ParamField>
+
+```bash
+curl -X POST 'http://localhost:8080/api/customer/cust-uuid-here/asset/a3d40b30-42b6-11ef-9e02-0050568351c8' \
+  -H 'Authorization: Bearer $TOKEN'
+```
+
+---
+
+### Unassign an asset from a customer
+
+<ResponseField name="DELETE /api/customer/asset/{assetId}" type="endpoint" />
+
+Removes the asset from its currently assigned customer and returns it to the tenant's unassigned pool.
+
+<ParamField path="assetId" type="string" required>
+  UUID of the asset to unassign.
+</ParamField>
+
+```bash
+curl -X DELETE 'http://localhost:8080/api/customer/asset/a3d40b30-42b6-11ef-9e02-0050568351c8' \
+  -H 'Authorization: Bearer $TOKEN'
+```
+
+---
+
+## Example: create an asset and relate a device to it
+
+The following sequence creates a `Building-A` asset, then links an existing device to it using a `Contains` entity relation.
+
+<CodeGroup>
+```bash Step 1 — create the asset
+curl -X POST 'http://localhost:8080/api/asset' \
+  -H 'Authorization: Bearer $TOKEN' \
+  -H 'Content-Type: application/json' \
+  -d '{"name": "Building-A", "type": "building"}'
+```
+
+```bash Step 2 — relate the device to the asset
+curl -X POST 'http://localhost:8080/api/v2/relation' \
+  -H 'Authorization: Bearer $TOKEN' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "from": {"entityType": "ASSET", "id": "a3d40b30-42b6-11ef-9e02-0050568351c8"},
+    "to":   {"entityType": "DEVICE", "id": "784f394c-42b6-11ef-9e02-0050568351c8"},
+    "type": "Contains",
+    "typeGroup": "COMMON"
+  }'
+```
+</CodeGroup>
+
+After this, rule chains and widgets that traverse asset relations will correctly resolve which devices belong to `Building-A`. See the [Entity Relations](/api/entity-relations) page for a full description of the relation API.
+
+---
+
+## Asset profiles
+
+Asset profiles work similarly to device profiles. Each profile can define:
+
+- A **default rule chain** that processes attribute updates and events for assets of that profile type.
+- **Alarm rules** that trigger when asset attributes change.
+- Custom **dashboard** and **mobile dashboard** defaults for customer-facing views.
+
+To list available asset profiles:
+
+```bash
+curl -X GET 'http://localhost:8080/api/assetProfiles?pageSize=20&page=0' \
+  -H 'Authorization: Bearer $TOKEN'
+```
+
+<Tip>
+Use entity relations to build multi-level asset hierarchies: a `Campus` asset can `Contains` multiple `Building` assets, each of which `Contains` multiple `Floor` assets, and each floor `Contains` devices. Traversing this tree lets dashboards and rule chains aggregate data bottom-up, providing roll-up KPIs from individual sensors all the way up to a campus level.
+</Tip>

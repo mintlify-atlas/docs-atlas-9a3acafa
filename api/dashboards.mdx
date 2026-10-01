@@ -1,0 +1,342 @@
+---
+title: "REST API Endpoints for Dashboard Management in ThingsBoard"
+sidebarTitle: "Dashboards"
+description: "Create, share, and manage ThingsBoard dashboards via REST API. Assign dashboards to customers, set public access, and query dashboard configurations."
+---
+
+ThingsBoard dashboards are the primary visualization layer for IoT data. Each dashboard contains a collection of configurable widgets — charts, maps, gauges, tables, and more — arranged in named states and layouts. The Dashboard Management API lets you create and update dashboards programmatically, assign them to customers, configure public sharing, and retrieve full dashboard JSON for export or version control.
+
+<Note>
+  The **dashboard configuration JSON** (the `configuration` field) is a complex, deeply nested object that describes every widget, its data sources, layout positions, and appearance settings. For building or modifying dashboards interactively, the ThingsBoard UI editor is strongly recommended. Use the API primarily for export/import workflows, bulk assignment, and automation.
+</Note>
+
+---
+
+## Dashboard object
+
+<ResponseField name="id" type="object">
+  Unique identifier. Contains `entityType: "DASHBOARD"` and a UUID `id`.
+</ResponseField>
+
+<ResponseField name="title" type="string" required>
+  Human-readable name of the dashboard, displayed in the UI and dashboard list.
+</ResponseField>
+
+<ResponseField name="tenantId" type="object">
+  The tenant that owns this dashboard.
+</ResponseField>
+
+<ResponseField name="assignedCustomers" type="array">
+  List of customers this dashboard has been shared with. Each entry includes a `customerId` and a `public` flag.
+</ResponseField>
+
+<ResponseField name="configuration" type="object">
+  The full dashboard definition — widgets, layouts, states, filters, and entity aliases.
+
+  <Expandable title="Top-level configuration keys">
+    ```json
+    {
+      "description": "",
+      "widgets": { "<widgetId>": { ... } },
+      "layouts": {
+        "main": {
+          "widgets": {
+            "<widgetId>": { "sizeX": 5, "sizeY": 3, "row": 0, "col": 0 }
+          }
+        }
+      },
+      "states": {
+        "default": {
+          "name": "Default State",
+          "root": true,
+          "layouts": { "main": { ... } }
+        }
+      },
+      "entityAliases": { "<aliasId>": { "id": "...", "alias": "device1", "filter": { ... } } },
+      "filters": {}
+    }
+    ```
+  </Expandable>
+</ResponseField>
+
+---
+
+## Endpoints
+
+### Create or update a dashboard
+
+Omit the `id` field to create a new dashboard; include an existing `id` to update it.
+
+```http
+POST /api/dashboard
+Authorization: Bearer {jwtToken}
+Content-Type: application/json
+```
+
+**Minimal request body (creates a blank dashboard)**
+
+```json
+{
+  "title": "Plant Floor Monitor",
+  "configuration": {}
+}
+```
+
+**Response** — the saved dashboard object with its generated `id`.
+
+---
+
+### Get dashboard by ID
+
+Returns the full dashboard object including the complete `configuration` JSON.
+
+```http
+GET /api/dashboard/{dashboardId}
+Authorization: Bearer {jwtToken}
+```
+
+<ParamField path="dashboardId" type="string" required>
+  UUID of the dashboard to retrieve.
+</ParamField>
+
+---
+
+### Get dashboard info (lightweight)
+
+Returns only the dashboard metadata (title, assigned customers, timestamps) without the heavy `configuration` payload.
+
+```http
+GET /api/dashboard/info/{dashboardId}
+Authorization: Bearer {jwtToken}
+```
+
+<ParamField path="dashboardId" type="string" required>
+  UUID of the dashboard.
+</ParamField>
+
+---
+
+### Delete dashboard
+
+<Warning>
+  Deleting a dashboard removes it permanently, including all its widget configurations. This action cannot be undone.
+</Warning>
+
+```http
+DELETE /api/dashboard/{dashboardId}
+Authorization: Bearer {jwtToken}
+```
+
+<ParamField path="dashboardId" type="string" required>
+  UUID of the dashboard to delete.
+</ParamField>
+
+---
+
+### List tenant dashboards
+
+Returns a paginated list of all dashboards belonging to the current tenant.
+
+```http
+GET /api/tenant/dashboards?pageSize={pageSize}&page={page}
+Authorization: Bearer {jwtToken}
+```
+
+<ParamField query="pageSize" type="integer" required>
+  Number of results per page.
+</ParamField>
+
+<ParamField query="page" type="integer" required>
+  Zero-based page index.
+</ParamField>
+
+<ParamField query="textSearch" type="string">
+  Optional substring filter on the dashboard title.
+</ParamField>
+
+<ParamField query="sortProperty" type="string">
+  Field to sort by. Allowed: `title`, `createdTime`. Default: `title`.
+</ParamField>
+
+<ParamField query="sortOrder" type="string">
+  `ASC` or `DESC`. Default: `ASC`.
+</ParamField>
+
+**Example response**
+
+```json
+{
+  "data": [
+    {
+      "id": { "entityType": "DASHBOARD", "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6" },
+      "title": "Plant Floor Monitor",
+      "tenantId": { "entityType": "TENANT", "id": "..." }
+    }
+  ],
+  "totalPages": 1,
+  "totalElements": 1,
+  "hasNext": false
+}
+```
+
+---
+
+### List customer dashboards
+
+Returns dashboards that have been shared (assigned) to a specific customer.
+
+```http
+GET /api/customer/{customerId}/dashboards?pageSize={pageSize}&page={page}
+Authorization: Bearer {jwtToken}
+```
+
+<ParamField path="customerId" type="string" required>
+  UUID of the customer.
+</ParamField>
+
+<ParamField query="pageSize" type="integer" required>
+  Number of results per page.
+</ParamField>
+
+<ParamField query="page" type="integer" required>
+  Zero-based page index.
+</ParamField>
+
+---
+
+### Assign dashboard to customer
+
+Makes the dashboard visible to all users belonging to the specified customer.
+
+```http
+POST /api/customer/{customerId}/dashboard/{dashboardId}
+Authorization: Bearer {jwtToken}
+```
+
+<ParamField path="customerId" type="string" required>
+  UUID of the customer to assign the dashboard to.
+</ParamField>
+
+<ParamField path="dashboardId" type="string" required>
+  UUID of the dashboard to assign.
+</ParamField>
+
+---
+
+### Unassign dashboard from customer
+
+Removes the dashboard from the customer's visible set without deleting it.
+
+```http
+DELETE /api/customer/{customerId}/dashboard/{dashboardId}
+Authorization: Bearer {jwtToken}
+```
+
+<ParamField path="customerId" type="string" required>
+  UUID of the customer.
+</ParamField>
+
+<ParamField path="dashboardId" type="string" required>
+  UUID of the dashboard to unassign.
+</ParamField>
+
+---
+
+### Make dashboard public
+
+Sets the dashboard to be accessible without authentication via a public URL. Returns the updated dashboard object with the public customer assignment populated.
+
+```http
+POST /api/customer/public/dashboard/{dashboardId}
+Authorization: Bearer {jwtToken}
+```
+
+<ParamField path="dashboardId" type="string" required>
+  UUID of the dashboard to make public.
+</ParamField>
+
+---
+
+### Set tenant home dashboard
+
+Configures the default landing dashboard for all users in the tenant.
+
+```http
+POST /api/tenant/dashboard/home/info
+Authorization: Bearer {jwtToken}
+Content-Type: application/json
+```
+
+**Request body**
+
+```json
+{
+  "dashboardId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "hideDashboardToolbar": false
+}
+```
+
+---
+
+### Set customer home dashboard
+
+Configures the default landing dashboard for all users within a specific customer.
+
+```http
+POST /api/customer/dashboard/home/info
+Authorization: Bearer {jwtToken}
+Content-Type: application/json
+```
+
+**Request body**
+
+```json
+{
+  "dashboardId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "hideDashboardToolbar": true
+}
+```
+
+---
+
+## Full example: create and share a dashboard
+
+<Steps>
+  <Step title="Create the dashboard">
+    ```bash
+    DASHBOARD=$(curl -s -X POST https://thingsboard.example.com/api/dashboard \
+      -H "Authorization: Bearer $TENANT_JWT" \
+      -H "Content-Type: application/json" \
+      -d '{"title": "Warehouse Sensors", "configuration": {}}')
+
+    DASHBOARD_ID=$(echo $DASHBOARD | python3 -c "import sys,json; print(json.load(sys.stdin)['id']['id'])")
+    ```
+  </Step>
+
+  <Step title="Assign the dashboard to a customer">
+    ```bash
+    curl -X POST "https://thingsboard.example.com/api/customer/${CUSTOMER_ID}/dashboard/${DASHBOARD_ID}" \
+      -H "Authorization: Bearer $TENANT_JWT"
+    ```
+  </Step>
+
+  <Step title="Set as the customer's home dashboard">
+    ```bash
+    curl -X POST "https://thingsboard.example.com/api/customer/dashboard/home/info" \
+      -H "Authorization: Bearer $TENANT_JWT" \
+      -H "Content-Type: application/json" \
+      -d "{\"dashboardId\": \"${DASHBOARD_ID}\", \"hideDashboardToolbar\": false}"
+    ```
+  </Step>
+</Steps>
+
+---
+
+## Error codes
+
+| HTTP Status | Meaning |
+|-------------|---------|
+| `400 Bad Request` | Missing `title` or malformed `configuration` JSON |
+| `401 Unauthorized` | Missing or expired JWT token |
+| `403 Forbidden` | Insufficient permissions (e.g., Customer User trying to create a dashboard) |
+| `404 Not Found` | Dashboard or customer UUID does not exist |

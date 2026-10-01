@@ -1,0 +1,213 @@
+---
+title: "Connect Devices to ThingsBoard via HTTP API"
+sidebarTitle: "HTTP"
+description: "Use ThingsBoard's HTTP device API to post telemetry, update and request attributes, subscribe to RPC commands, and claim devices. No client library needed."
+---
+
+ThingsBoard exposes a RESTful HTTP API that any device capable of making HTTP requests can use without requiring a dedicated client library. Devices authenticate by embedding their access token in the URL path. The API supports telemetry ingestion, attribute management, server-side RPC, device claiming, and OTA firmware/software downloads. Long-polling is available for both RPC commands and attribute update subscriptions.
+
+## Base URL
+
+All device API endpoints share the same base path. Replace `{token}` with your device's access token.
+
+```
+http(s)://{host}/api/v1/{token}/
+```
+
+For example: `https://thingsboard.example.com/api/v1/A1_TEST_TOKEN/telemetry`
+
+## Endpoint Reference
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/v1/{token}/telemetry` | Publish time-series telemetry |
+| `POST` | `/api/v1/{token}/attributes` | Update client-side attributes |
+| `GET` | `/api/v1/{token}/attributes` | Read server/shared/client attributes |
+| `GET` | `/api/v1/{token}/attributes/updates` | Long-poll for attribute updates |
+| `GET` | `/api/v1/{token}/rpc` | Long-poll for pending RPC commands |
+| `POST` | `/api/v1/{token}/rpc/{requestId}` | Reply to a server-initiated RPC command |
+| `POST` | `/api/v1/{token}/rpc` | Send a client-initiated RPC request |
+| `POST` | `/api/v1/{token}/claim` | Claim device ownership |
+| `GET` | `/api/v1/{token}/firmware` | Download OTA firmware package |
+| `GET` | `/api/v1/{token}/software` | Download OTA software package |
+
+## Sending Telemetry
+
+<Tabs>
+  <Tab title="Simple key-value">
+    The simplest payload is a flat JSON object. The server timestamps the data at the moment of receipt.
+
+    ```bash
+    curl -v -X POST \
+      "https://thingsboard.example.com/api/v1/YOUR_DEVICE_ACCESS_TOKEN/telemetry" \
+      -H "Content-Type: application/json" \
+      -d '{"temperature": 23.5, "humidity": 65, "pressure": 1013}'
+    ```
+  </Tab>
+  <Tab title="Single timestamped point">
+    Include `ts` (Unix epoch in milliseconds) to specify an explicit timestamp.
+
+    ```bash
+    curl -v -X POST \
+      "https://thingsboard.example.com/api/v1/YOUR_DEVICE_ACCESS_TOKEN/telemetry" \
+      -H "Content-Type: application/json" \
+      -d '{"ts": 1634712287000, "values": {"temperature": 26, "humidity": 87}}'
+    ```
+  </Tab>
+  <Tab title="Batch (array)">
+    Send multiple time-stamped data points in a single request to reduce overhead.
+
+    ```bash
+    curl -v -X POST \
+      "https://thingsboard.example.com/api/v1/YOUR_DEVICE_ACCESS_TOKEN/telemetry" \
+      -H "Content-Type: application/json" \
+      -d '[
+        {"ts": 1634712287000, "values": {"temperature": 26, "humidity": 87}},
+        {"ts": 1634712588000, "values": {"temperature": 25, "humidity": 88}}
+      ]'
+    ```
+  </Tab>
+</Tabs>
+
+A successful request returns HTTP `200 OK` with an empty body.
+
+## Managing Attributes
+
+### Update Client Attributes
+
+Publish a JSON object of key-value pairs to set or overwrite client-side device attributes.
+
+```bash
+curl -v -X POST \
+  "https://thingsboard.example.com/api/v1/YOUR_DEVICE_ACCESS_TOKEN/attributes" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "firmwareVersion": "2.1.0",
+    "serialNumber": "SN-00042",
+    "hardwareRevision": "B"
+  }'
+```
+
+### Read Attributes
+
+Retrieve device attributes by scope. Use query parameters to filter by key name.
+
+```bash
+# Request specific client-scope and shared-scope attribute keys
+curl -v -X GET \
+  "https://thingsboard.example.com/api/v1/YOUR_DEVICE_ACCESS_TOKEN/attributes?clientKeys=firmwareVersion&sharedKeys=targetFirmware"
+
+# Request all client-scope attributes
+curl -v -X GET \
+  "https://thingsboard.example.com/api/v1/YOUR_DEVICE_ACCESS_TOKEN/attributes?allClientKeys=true"
+```
+
+Example response:
+
+```json
+{
+  "client": {
+    "firmwareVersion": "2.1.0"
+  },
+  "shared": {
+    "targetFirmware": "2.2.0"
+  }
+}
+```
+
+### Long-Poll for Attribute Updates
+
+Subscribe to shared attribute changes pushed by the server. The connection stays open until an update arrives or the timeout expires.
+
+```bash
+curl -v -X GET \
+  "https://thingsboard.example.com/api/v1/YOUR_DEVICE_ACCESS_TOKEN/attributes/updates?timeout=30000"
+```
+
+When an attribute is updated server-side, the response payload contains the changed key-value pairs.
+
+## Handling RPC Commands
+
+### Poll for Pending Commands
+
+ThingsBoard queues RPC requests until the device polls for them. Each poll returns one pending command.
+
+```bash
+curl -v -X GET \
+  "https://thingsboard.example.com/api/v1/YOUR_DEVICE_ACCESS_TOKEN/rpc?timeout=30000"
+```
+
+The `timeout` parameter (in milliseconds) controls how long the server holds the connection open waiting for a command. Set it to `0` for an immediate non-blocking poll.
+
+An RPC request payload looks like:
+
+```json
+{
+  "id": 12,
+  "method": "setLedState",
+  "params": {
+    "state": true
+  }
+}
+```
+
+### Reply to an RPC Command
+
+After processing the command, POST your result back using the `id` from the request.
+
+```bash
+curl -v -X POST \
+  "https://thingsboard.example.com/api/v1/YOUR_DEVICE_ACCESS_TOKEN/rpc/12" \
+  -H "Content-Type: application/json" \
+  -d '{"result": "ok"}'
+```
+
+### Client-Initiated RPC
+
+A device can also initiate an RPC call to the server (processed by the rule engine):
+
+```bash
+curl -v -X POST \
+  "https://thingsboard.example.com/api/v1/YOUR_DEVICE_ACCESS_TOKEN/rpc" \
+  -H "Content-Type: application/json" \
+  -d '{"method": "getTime", "params": {}}'
+```
+
+## Claiming a Device
+
+The claim endpoint associates a device with a tenant user. Supply an optional secret key and duration.
+
+```bash
+curl -v -X POST \
+  "https://thingsboard.example.com/api/v1/YOUR_DEVICE_ACCESS_TOKEN/claim" \
+  -H "Content-Type: application/json" \
+  -d '{"secretKey": "myClaimSecret", "durationMs": 60000}'
+```
+
+If `secretKey` is omitted, an empty string is used as the default. If `durationMs` is omitted, the system-configured claim duration applies.
+
+## OTA Package Downloads
+
+Devices can download firmware and software packages directly over HTTP:
+
+```bash
+# Download firmware
+curl -v -X GET \
+  "https://thingsboard.example.com/api/v1/YOUR_DEVICE_ACCESS_TOKEN/firmware?title=myFirmware&version=2.2.0" \
+  -o firmware.bin
+
+# Download software
+curl -v -X GET \
+  "https://thingsboard.example.com/api/v1/YOUR_DEVICE_ACCESS_TOKEN/software?title=myApp&version=1.5.0" \
+  -o software.bin
+```
+
+Use the `size` and `chunk` parameters to download large packages in smaller pieces.
+
+<Tip>
+  Always use **HTTPS** in production to protect device access tokens in transit. Configure a valid TLS certificate on your ThingsBoard instance or place it behind an HTTPS-terminating reverse proxy.
+</Tip>
+
+<Note>
+  The HTTP transport is part of the ThingsBoard Transport API. For high-frequency telemetry publishing, consider using MQTT instead — it has lower overhead due to its persistent connection model and binary framing.
+</Note>

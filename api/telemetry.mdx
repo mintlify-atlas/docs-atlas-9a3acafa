@@ -1,0 +1,468 @@
+---
+title: "REST API Endpoints for ThingsBoard Telemetry and Attributes"
+sidebarTitle: "Telemetry"
+description: "Read and write time-series telemetry and entity attributes via the ThingsBoard REST API. Supports aggregation, time windows, and WebSocket subscriptions for real-time data."
+---
+
+ThingsBoard separates entity data into two distinct stores: **time-series** data for timestamped sensor readings (temperature, voltage, speed, GPS coordinates), and **attributes** for configuration and state values that do not need a historical record. Both stores are accessible through the same telemetry plugin REST endpoints, which work uniformly across all entity types — devices, assets, customers, tenants, and more.
+
+All telemetry endpoints share the base path `/api/plugins/telemetry` and require a valid JWT bearer token. Requests are validated against the authenticated user's `READ_TELEMETRY` or `WRITE_TELEMETRY` (for time-series) and `READ_ATTRIBUTES` or `WRITE_ATTRIBUTES` (for attributes) permissions.
+
+---
+
+## Attribute scopes
+
+Attributes are divided into three scopes that control visibility and write access:
+
+| Scope | Description |
+|---|---|
+| `SERVER_SCOPE` | Written and read by the server; not accessible by the device directly. Supported for all entity types. Use for configuration pushed from the platform. |
+| `CLIENT_SCOPE` | Written by the device when it connects; read by the server. Supported for devices only. Reflects the device's own reported state. |
+| `SHARED_SCOPE` | Written by the server; read by both the server and the connected device. Supported for devices only. Ideal for remote configuration that the device should be aware of. |
+
+---
+
+## Time-series endpoints
+
+### Save time-series data
+
+<ResponseField name="POST /api/plugins/telemetry/{entityType}/{entityId}/timeseries/{scope}" type="endpoint" />
+
+Creates or updates time-series data points for the specified entity. The `scope` path variable is required by the URL pattern but is not used to filter storage — all telemetry lands in the same time-series table. Use any non-empty string such as `ANY` or `telemetry` for this parameter.
+
+<ParamField path="entityType" type="string" required>
+  Entity type: `DEVICE`, `ASSET`, `CUSTOMER`, `TENANT`, etc.
+</ParamField>
+
+<ParamField path="entityId" type="string" required>
+  UUID of the target entity.
+</ParamField>
+
+<ParamField path="scope" type="string" required>
+  Path placeholder required by the URL; not used for storage routing. Pass any non-empty string.
+</ParamField>
+
+The request body accepts a flat JSON object (all values use the current server timestamp) or a `ts`+`values` envelope for a custom timestamp:
+
+<CodeGroup>
+```bash Save telemetry with current timestamp
+curl -X POST 'http://localhost:8080/api/plugins/telemetry/DEVICE/784f394c-42b6-11ef-9e02-0050568351c8/timeseries/ANY' \
+  -H 'Authorization: Bearer $TOKEN' \
+  -H 'Content-Type: application/json' \
+  -d '{"temperature": 23.5, "humidity": 61, "status": "ok"}'
+```
+
+```bash Save telemetry with explicit timestamp
+curl -X POST 'http://localhost:8080/api/plugins/telemetry/DEVICE/784f394c-42b6-11ef-9e02-0050568351c8/timeseries/ANY' \
+  -H 'Authorization: Bearer $TOKEN' \
+  -H 'Content-Type: application/json' \
+  -d '{"ts": 1720000000000, "values": {"temperature": 22.1, "humidity": 58}}'
+```
+
+```bash Save multiple timestamped entries at once
+curl -X POST 'http://localhost:8080/api/plugins/telemetry/DEVICE/784f394c-42b6-11ef-9e02-0050568351c8/timeseries/ANY' \
+  -H 'Authorization: Bearer $TOKEN' \
+  -H 'Content-Type: application/json' \
+  -d '[
+    {"ts": 1720000000000, "values": {"temperature": 21.0}},
+    {"ts": 1720003600000, "values": {"temperature": 22.5}},
+    {"ts": 1720007200000, "values": {"temperature": 23.1}}
+  ]'
+```
+</CodeGroup>
+
+---
+
+### Get latest time-series values
+
+<ResponseField name="GET /api/plugins/telemetry/{entityType}/{entityId}/values/timeseries" type="endpoint" />
+
+Returns the most recent value for each telemetry key. When `keys` is omitted, all keys are returned. By default all values are serialised as strings; set `useStrictDataTypes=true` to receive native JSON types.
+
+<ParamField path="entityType" type="string" required>
+  Entity type (e.g., `DEVICE`).
+</ParamField>
+
+<ParamField path="entityId" type="string" required>
+  UUID of the entity.
+</ParamField>
+
+<ParamField query="keys" type="string">
+  Comma-separated list of telemetry key names to return. Omit to return all keys.
+</ParamField>
+
+<ParamField query="useStrictDataTypes" type="boolean" default="false">
+  When `true`, numeric and boolean values are returned with their native JSON types rather than as strings.
+</ParamField>
+
+<CodeGroup>
+```bash Get latest values for all keys
+curl -X GET 'http://localhost:8080/api/plugins/telemetry/DEVICE/784f394c-42b6-11ef-9e02-0050568351c8/values/timeseries' \
+  -H 'Authorization: Bearer $TOKEN'
+```
+
+```bash Get latest values for specific keys
+curl -X GET 'http://localhost:8080/api/plugins/telemetry/DEVICE/784f394c-42b6-11ef-9e02-0050568351c8/values/timeseries?keys=temperature,humidity&useStrictDataTypes=true' \
+  -H 'Authorization: Bearer $TOKEN'
+```
+
+```json Response
+{
+  "temperature": [{"ts": 1720007200000, "value": 23.1}],
+  "humidity":    [{"ts": 1720007200000, "value": 58}]
+}
+```
+</CodeGroup>
+
+---
+
+### Query time-series history
+
+<ResponseField name="GET /api/plugins/telemetry/{entityType}/{entityId}/values/timeseries/history" type="endpoint" />
+
+Returns a range of historical time-series values for the specified entity and time window. Supports optional server-side aggregation to reduce the number of data points returned.
+
+<ParamField path="entityType" type="string" required>
+  Entity type.
+</ParamField>
+
+<ParamField path="entityId" type="string" required>
+  UUID of the entity.
+</ParamField>
+
+The following query parameters control the time window and aggregation:
+
+| Parameter | Type | Description |
+|---|---|---|
+| `keys` | string | Comma-separated telemetry key names to retrieve |
+| `startTs` | long | Start of the time range in Unix milliseconds (UTC) |
+| `endTs` | long | End of the time range in Unix milliseconds (UTC) |
+| `interval` | long | Aggregation bucket size in milliseconds |
+| `intervalType` | string | Bucket type: `MILLISECONDS` (default), `WEEK`, `WEEK_ISO`, `MONTH`, or `QUARTER` |
+| `agg` | enum | Aggregation function: `MIN`, `MAX`, `AVG`, `SUM`, `COUNT`, `NONE` (default) |
+| `limit` | int | Max data points per key when `agg` is `NONE`. Default `100` |
+| `orderBy` | string | Sort order for results: `ASC` or `DESC`. Default `DESC` |
+| `useStrictDataTypes` | boolean | Return native JSON types instead of strings |
+| `timeZone` | string | IANA timezone for calendar-based interval types (e.g., `America/New_York`) |
+
+<CodeGroup>
+```bash Last 24 hours of temperature with 1-hour AVG aggregation
+curl -X GET 'http://localhost:8080/api/plugins/telemetry/DEVICE/784f394c-42b6-11ef-9e02-0050568351c8/values/timeseries/history?keys=temperature&startTs=1719921600000&endTs=1720008000000&interval=3600000&agg=AVG&orderBy=ASC' \
+  -H 'Authorization: Bearer $TOKEN'
+```
+
+```bash Last 7 days, no aggregation, 500 points
+curl -X GET 'http://localhost:8080/api/plugins/telemetry/DEVICE/784f394c-42b6-11ef-9e02-0050568351c8/values/timeseries/history?keys=temperature,humidity&startTs=1719403200000&endTs=1720008000000&agg=NONE&limit=500&orderBy=DESC' \
+  -H 'Authorization: Bearer $TOKEN'
+```
+
+```json Response (AVG example)
+{
+  "temperature": [
+    {"ts": 1719925200000, "value": "21.3"},
+    {"ts": 1719928800000, "value": "22.0"},
+    {"ts": 1719932400000, "value": "22.8"}
+  ]
+}
+```
+</CodeGroup>
+
+---
+
+### List time-series keys
+
+<ResponseField name="GET /api/plugins/telemetry/{entityType}/{entityId}/keys/timeseries" type="endpoint" />
+
+Returns an array of all unique time-series key names recorded for the entity. Useful for populating key selection dropdowns in dashboards.
+
+```bash
+curl -X GET 'http://localhost:8080/api/plugins/telemetry/DEVICE/784f394c-42b6-11ef-9e02-0050568351c8/keys/timeseries' \
+  -H 'Authorization: Bearer $TOKEN'
+```
+
+```json Response
+["temperature", "humidity", "voltage", "rssi"]
+```
+
+---
+
+### Delete time-series data
+
+<ResponseField name="DELETE /api/plugins/telemetry/{entityType}/{entityId}/timeseries/delete" type="endpoint" />
+
+Deletes historical time-series data for the specified keys. Use `deleteAllDataForKeys=true` to wipe the entire history, or supply `startTs`/`endTs` to remove only a specific time window.
+
+<ParamField path="entityType" type="string" required>
+  Entity type.
+</ParamField>
+
+<ParamField path="entityId" type="string" required>
+  UUID of the entity.
+</ParamField>
+
+<ParamField query="keys" type="string" required>
+  Comma-separated key names to delete.
+</ParamField>
+
+<ParamField query="deleteAllDataForKeys" type="boolean" default="false">
+  When `true`, deletes all data for the specified keys regardless of time range.
+</ParamField>
+
+<ParamField query="startTs" type="long">
+  Start of the deletion time range (ms). Required when `deleteAllDataForKeys` is `false`.
+</ParamField>
+
+<ParamField query="endTs" type="long">
+  End of the deletion time range (ms). Required when `deleteAllDataForKeys` is `false`.
+</ParamField>
+
+<ParamField query="deleteLatest" type="boolean" default="true">
+  Also delete the cached latest value if its timestamp falls within the range.
+</ParamField>
+
+<ParamField query="rewriteLatestIfDeleted" type="boolean" default="false">
+  After deleting the latest value, replace it with the most recent surviving data point.
+</ParamField>
+
+```bash
+curl -X DELETE 'http://localhost:8080/api/plugins/telemetry/DEVICE/784f394c-42b6-11ef-9e02-0050568351c8/timeseries/delete?keys=temperature&deleteAllDataForKeys=true' \
+  -H 'Authorization: Bearer $TOKEN'
+```
+
+---
+
+## Attribute endpoints
+
+### Save attributes
+
+<ResponseField name="POST /api/plugins/telemetry/{entityType}/{entityId}/attributes/{scope}" type="endpoint" />
+
+Creates or updates one or more attribute key-value pairs for the given entity and scope. The request body is a flat JSON object. Triggers `ATTRIBUTES_UPDATED` events in the rule engine and creates an audit log entry.
+
+<ParamField path="entityType" type="string" required>
+  Entity type.
+</ParamField>
+
+<ParamField path="entityId" type="string" required>
+  UUID of the entity.
+</ParamField>
+
+<ParamField path="scope" type="string" required>
+  Attribute scope: `SERVER_SCOPE` or `SHARED_SCOPE`. (`CLIENT_SCOPE` is device-managed and cannot be written via this endpoint.)
+</ParamField>
+
+<CodeGroup>
+```bash Save server-scope attributes
+curl -X POST 'http://localhost:8080/api/plugins/telemetry/DEVICE/784f394c-42b6-11ef-9e02-0050568351c8/attributes/SERVER_SCOPE' \
+  -H 'Authorization: Bearer $TOKEN' \
+  -H 'Content-Type: application/json' \
+  -d '{"location": "Room 101", "installDate": "2024-01-15", "maxTemp": 50}'
+```
+
+```bash Push a shared configuration value to a device
+curl -X POST 'http://localhost:8080/api/plugins/telemetry/DEVICE/784f394c-42b6-11ef-9e02-0050568351c8/attributes/SHARED_SCOPE' \
+  -H 'Authorization: Bearer $TOKEN' \
+  -H 'Content-Type: application/json' \
+  -d '{"reportingIntervalMs": 30000, "alarmThreshold": 45}'
+```
+</CodeGroup>
+
+---
+
+### Get attributes
+
+<ResponseField name="GET /api/plugins/telemetry/{entityType}/{entityId}/values/attributes/{scope}" type="endpoint" />
+
+Returns all attribute key-value pairs for the given scope, or a filtered subset when `keys` is supplied.
+
+<ParamField path="entityType" type="string" required>
+  Entity type.
+</ParamField>
+
+<ParamField path="entityId" type="string" required>
+  UUID of the entity.
+</ParamField>
+
+<ParamField path="scope" type="string" required>
+  Attribute scope: `SERVER_SCOPE`, `CLIENT_SCOPE`, or `SHARED_SCOPE`.
+</ParamField>
+
+<ParamField query="keys" type="string">
+  Comma-separated attribute keys to fetch. Returns all keys in the scope when omitted.
+</ParamField>
+
+<CodeGroup>
+```bash Get all server-scope attributes
+curl -X GET 'http://localhost:8080/api/plugins/telemetry/DEVICE/784f394c-42b6-11ef-9e02-0050568351c8/values/attributes/SERVER_SCOPE' \
+  -H 'Authorization: Bearer $TOKEN'
+```
+
+```bash Get specific shared-scope attributes
+curl -X GET 'http://localhost:8080/api/plugins/telemetry/DEVICE/784f394c-42b6-11ef-9e02-0050568351c8/values/attributes/SHARED_SCOPE?keys=reportingIntervalMs,alarmThreshold' \
+  -H 'Authorization: Bearer $TOKEN'
+```
+
+```json Response
+[
+  {"lastUpdateTs": 1720000000000, "key": "reportingIntervalMs", "value": 30000},
+  {"lastUpdateTs": 1720000000000, "key": "alarmThreshold", "value": 45}
+]
+```
+</CodeGroup>
+
+You can also retrieve attributes across all scopes simultaneously by omitting the `/{scope}` segment:
+
+```bash
+curl -X GET 'http://localhost:8080/api/plugins/telemetry/DEVICE/784f394c-42b6-11ef-9e02-0050568351c8/values/attributes?keys=location,reportingIntervalMs' \
+  -H 'Authorization: Bearer $TOKEN'
+```
+
+---
+
+### List attribute keys
+
+<ResponseField name="GET /api/plugins/telemetry/{entityType}/{entityId}/keys/attributes" type="endpoint" />
+
+Returns a merged set of all unique attribute key names across all scopes. To get keys for a specific scope, append `/{scope}` to the path.
+
+```bash
+curl -X GET 'http://localhost:8080/api/plugins/telemetry/DEVICE/784f394c-42b6-11ef-9e02-0050568351c8/keys/attributes' \
+  -H 'Authorization: Bearer $TOKEN'
+```
+
+```json Response
+["location", "installDate", "maxTemp", "reportingIntervalMs", "alarmThreshold", "firmwareVersion"]
+```
+
+---
+
+### Delete attributes
+
+<ResponseField name="DELETE /api/plugins/telemetry/{entityType}/{entityId}/{scope}" type="endpoint" />
+
+Deletes the specified attribute keys from the given scope. Keys that do not exist are silently ignored; the response is still `200 OK`. Triggers `ATTRIBUTES_DELETED` events in the rule engine.
+
+<ParamField path="entityType" type="string" required>
+  Entity type.
+</ParamField>
+
+<ParamField path="entityId" type="string" required>
+  UUID of the entity.
+</ParamField>
+
+<ParamField path="scope" type="string" required>
+  Attribute scope: `SERVER_SCOPE`, `CLIENT_SCOPE`, or `SHARED_SCOPE`.
+</ParamField>
+
+<ParamField query="keys" type="string" required>
+  Comma-separated attribute key names to delete.
+</ParamField>
+
+```bash
+curl -X DELETE 'http://localhost:8080/api/plugins/telemetry/DEVICE/784f394c-42b6-11ef-9e02-0050568351c8/SERVER_SCOPE?keys=location,installDate' \
+  -H 'Authorization: Bearer $TOKEN'
+```
+
+---
+
+## WebSocket subscription API
+
+ThingsBoard exposes a WebSocket endpoint for real-time telemetry and attribute push updates. Clients subscribe to one or more entity/key combinations and receive delta updates as data arrives — no polling required.
+
+### Connect
+
+```
+ws://{host}/api/ws/plugins/telemetry?token={jwtToken}
+```
+
+Replace `{host}` with your ThingsBoard host (e.g., `localhost:8080`) and `{jwtToken}` with a valid JWT access token obtained from the authentication API.
+
+### Subscribe to time-series updates
+
+After opening the WebSocket connection, send a JSON subscription command:
+
+```json
+{
+  "tsSubCmds": [
+    {
+      "entityType": "DEVICE",
+      "entityId": "784f394c-42b6-11ef-9e02-0050568351c8",
+      "scope": "LATEST_TELEMETRY",
+      "cmdId": 1
+    }
+  ],
+  "historyCmds": [],
+  "attrSubCmds": []
+}
+```
+
+<ResponseField name="tsSubCmds" type="array">
+  List of real-time telemetry subscriptions. The platform pushes the current latest values immediately after subscription and then streams any new data point as it arrives.
+</ResponseField>
+
+<ResponseField name="cmdId" type="integer">
+  Client-assigned integer that correlates subscription responses. Use a unique value for each subscription in the same connection.
+</ResponseField>
+
+### Subscribe to attribute updates
+
+```json
+{
+  "tsSubCmds": [],
+  "historyCmds": [],
+  "attrSubCmds": [
+    {
+      "entityType": "DEVICE",
+      "entityId": "784f394c-42b6-11ef-9e02-0050568351c8",
+      "scope": "SHARED_SCOPE",
+      "cmdId": 2
+    }
+  ]
+}
+```
+
+### Data update message format
+
+The platform pushes data updates as JSON messages on the same WebSocket connection:
+
+```json
+{
+  "subscriptionId": 1,
+  "errorCode": 0,
+  "errorMsg": null,
+  "data": {
+    "temperature": [[1720010000000, "24.1"]],
+    "humidity":    [[1720010000000, "59"]]
+  }
+}
+```
+
+<ResponseField name="subscriptionId" type="integer">
+  Matches the `cmdId` sent in the subscription command.
+</ResponseField>
+
+<ResponseField name="errorCode" type="integer">
+  `0` for success. Non-zero values indicate a permission or entity lookup error.
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  Map of key names to arrays of `[timestamp, value]` pairs representing new data points since the last update.
+</ResponseField>
+
+### Unsubscribe
+
+Send an unsubscribe command referencing the original `cmdId`:
+
+```json
+{
+  "tsSubCmds": [
+    {"cmdId": 1, "unsubscribe": true}
+  ],
+  "historyCmds": [],
+  "attrSubCmds": []
+}
+```
+
+<Warning>
+WebSocket connections are authenticated with the JWT token supplied in the query string at connection time. Tokens expire according to your ThingsBoard security configuration. When a token expires the connection is terminated, and clients must reconnect with a fresh token. Build your client with automatic reconnect logic and token refresh to avoid data gaps.
+</Warning>

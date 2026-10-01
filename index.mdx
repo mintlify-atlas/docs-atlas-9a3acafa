@@ -1,20 +1,89 @@
 ---
-title: "Introduction"
-description: "Welcome to your project"
+title: "ThingsBoard: Open-Source IoT Platform"
+sidebarTitle: "Home"
+description: "ThingsBoard is an open-source IoT platform for device management, data collection, processing, and real-time visualization. Connect any device, build dashboards, and automate workflows."
 ---
 
-Write a short description of your product here. What it does, who it's for, and what they can accomplish with it.
+ThingsBoard is an all-in-one open-source IoT platform that enables you to provision and manage devices, collect and visualize telemetry data, and automate responses with a visual rule engine. It supports MQTT, HTTP, CoAP, LwM2M, and SNMP protocols out of the box and scales from a single server to a full microservices deployment.
 
-<Tip>
-  Ready to make this your own? Start by editing this page. Update your `docs.json` file to customize your site. Then fill out the [Quickstart](/quickstart) page.
-</Tip>
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Connect your first device and push telemetry data in under 10 minutes.
+  </Card>
+  <Card title="Installation" icon="server" href="/installation">
+    Deploy ThingsBoard on-premises with Docker, Kubernetes, or a native package.
+  </Card>
+  <Card title="Core Concepts" icon="book-open" href="/concepts/entities">
+    Understand entities, tenancy, the rule engine, and the data model.
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/overview">
+    Explore the full REST API for devices, assets, telemetry, and management.
+  </Card>
+</CardGroup>
 
-<Card title="Quickstart" icon="rocket" href="/quickstart">
-  This card links to the quickstart page in your project.
-</Card>
-<Card title="Components" icon="puzzle-piece" href="https://mintlify.com/docs/components">
-  Add cards, callouts, steps, tabs, and more to design and structure your pages.
-</Card>
-<Card title="Settings" icon="gear" href="https://mintlify.com/docs/organize/settings">
-  Set your site name, branding, and navigation in the `docs.json` file.
-</Card>
+## What You Can Build
+
+ThingsBoard gives you the primitives to build any IoT solution—from industrial SCADA systems to smart home apps.
+
+<CardGroup cols={3}>
+  <Card title="Device Management" icon="microchip" href="/concepts/entities">
+    Provision, monitor, and control thousands of devices. Define profiles, manage credentials, and track connectivity status.
+  </Card>
+  <Card title="Real-Time Dashboards" icon="chart-line" href="/dashboards/overview">
+    Build interactive dashboards with 100+ built-in widgets. Share live views with customers and operators.
+  </Card>
+  <Card title="Rule Engine" icon="bolt" href="/concepts/rule-engine">
+    Process telemetry streams, trigger alarms, send notifications, and call external APIs — all without writing server code.
+  </Card>
+  <Card title="Multi-Tenancy" icon="building" href="/concepts/tenancy">
+    Serve multiple customers from a single installation with full data isolation and per-tenant configuration.
+  </Card>
+  <Card title="Edge Computing" icon="network-wired" href="/administration/edge">
+    Run ThingsBoard Edge at remote sites for offline operation and local data processing.
+  </Card>
+  <Card title="SCADA Dashboards" icon="industry" href="/dashboards/scada">
+    Monitor and control industrial processes in real time with SCADA symbols and dynamic workflows.
+  </Card>
+</CardGroup>
+
+## Connect Devices in Minutes
+
+ThingsBoard supports five transport protocols so you can connect virtually any device without gateways or adapters.
+
+<Steps>
+  <Step title="Create a device">
+    Log in to the ThingsBoard UI, navigate to **Devices**, and create a new device. Copy the access token from the device credentials.
+  </Step>
+  <Step title="Push telemetry">
+    Send a POST request (or MQTT publish) with your sensor data. ThingsBoard stores every data point with a server-side timestamp.
+
+    ```bash
+    curl -X POST https://your-host/api/v1/$ACCESS_TOKEN/telemetry \
+      -H "Content-Type: application/json" \
+      -d '{"temperature": 23.5, "humidity": 60}'
+    ```
+  </Step>
+  <Step title="Build a dashboard">
+    Open **Dashboards**, add widgets, and bind them to your device's telemetry keys. Your data appears in real time.
+  </Step>
+  <Step title="Add a rule chain">
+    Create a rule chain to send an email or SMS alert when temperature exceeds a threshold — no code required.
+  </Step>
+</Steps>
+
+## Supported Transport Protocols
+
+<CardGroup cols={2}>
+  <Card title="MQTT" icon="wifi" href="/connectivity/mqtt">
+    Lightweight pub/sub protocol. Ideal for constrained devices. Supports QoS 0/1, persistent sessions, and TLS.
+  </Card>
+  <Card title="HTTP" icon="globe" href="/connectivity/http">
+    Simple request/response over HTTPS. No client library needed — works from any language or shell script.
+  </Card>
+  <Card title="CoAP" icon="signal" href="/connectivity/coap">
+    UDP-based protocol designed for low-power, lossy networks. Supports DTLS for secure communication.
+  </Card>
+  <Card title="LwM2M" icon="tower-broadcast" href="/connectivity/lwm2m">
+    OMA LwM2M standard for cellular IoT devices. Supports bootstrapping, object model, and firmware updates.
+  </Card>
+</CardGroup>

@@ -1,0 +1,247 @@
+---
+title: "Connect Devices to ThingsBoard via MQTT"
+sidebarTitle: "MQTT"
+description: "Use MQTT to send telemetry, update attributes, receive RPC commands, and subscribe to provisioning on ThingsBoard. Default port 1883, TLS on 8883."
+---
+
+MQTT is the primary transport protocol for connecting devices to ThingsBoard. It is a lightweight publish/subscribe messaging protocol designed for constrained devices and low-bandwidth, high-latency networks. ThingsBoard implements a full MQTT broker that devices connect to using a device access token for authentication. All standard IoT data flows — telemetry ingestion, attribute management, RPC commands, and device provisioning — are mapped to well-defined MQTT topics.
+
+## Connection Details
+
+<CardGroup cols={2}>
+  <Card title="Plain MQTT" icon="signal">
+    **Host:** `{your-thingsboard-host}`  
+    **Port:** `1883`  
+    **Protocol:** MQTT v3.1 / v3.1.1
+  </Card>
+  <Card title="MQTT over TLS/SSL" icon="lock">
+    **Host:** `{your-thingsboard-host}`  
+    **Port:** `8883`  
+    **Protocol:** MQTT v3.1 / v3.1.1 over TLS
+  </Card>
+</CardGroup>
+
+## Authentication
+
+ThingsBoard uses the MQTT **username** field to carry the device access token. Leave the password field empty. The client ID can be any unique string.
+
+```
+Username: <YOUR_DEVICE_ACCESS_TOKEN>
+Password: (empty)
+Client ID: any_unique_string
+```
+
+<Warning>
+  Never embed a device access token in the MQTT password field — it will be ignored. Always use the username field.
+</Warning>
+
+## Topic Reference
+
+ThingsBoard maps every IoT operation to a specific MQTT topic. The base topic for device API is `v1/devices/me`, and the base topic for gateway API is `v1/gateway`.
+
+| Topic | Direction | Description |
+|-------|-----------|-------------|
+| `v1/devices/me/telemetry` | **Publish** | Send time-series telemetry data |
+| `v1/devices/me/attributes` | **Publish** | Update client-side attributes |
+| `v1/devices/me/attributes/request/{requestId}` | **Publish** | Request server/shared attributes |
+| `v1/devices/me/attributes/response/+` | **Subscribe** | Receive attribute request responses |
+| `v1/devices/me/rpc/request/+` | **Subscribe** | Receive server-initiated RPC commands |
+| `v1/devices/me/rpc/response/{requestId}` | **Publish** | Reply to an RPC command |
+| `v1/devices/me/claim` | **Publish** | Claim device ownership |
+| `/provision/request` | **Publish** | Send device provisioning request |
+| `/provision/response` | **Subscribe** | Receive provisioning credentials |
+| `v1/gateway/connect` | **Publish** | Gateway: announce connected device |
+| `v1/gateway/disconnect` | **Publish** | Gateway: announce disconnected device |
+| `v1/gateway/telemetry` | **Publish** | Gateway: send telemetry for sub-devices |
+| `v1/gateway/attributes` | **Publish** | Gateway: update attributes for sub-devices |
+| `v1/gateway/rpc` | **Publish** | Gateway: reply to RPC commands for sub-devices |
+| `v1/gateway/attributes/request` | **Publish** | Gateway: request attributes for sub-devices |
+| `v1/gateway/attributes/response` | **Subscribe** | Gateway: receive attribute responses |
+
+## Sending Telemetry
+
+Telemetry is a JSON object published to `v1/devices/me/telemetry`. You can send a simple flat object, a single timestamped data point, or an array of timestamped data points.
+
+<Tabs>
+  <Tab title="Simple (no timestamp)">
+    ```bash
+    mosquitto_pub -d -q 1 \
+      -h "thingsboard.example.com" \
+      -p 1883 \
+      -t "v1/devices/me/telemetry" \
+      -u "YOUR_DEVICE_ACCESS_TOKEN" \
+      -m '{"temperature": 23.5, "humidity": 65}'
+    ```
+  </Tab>
+  <Tab title="With timestamp">
+    ```bash
+    mosquitto_pub -d -q 1 \
+      -h "thingsboard.example.com" \
+      -p 1883 \
+      -t "v1/devices/me/telemetry" \
+      -u "YOUR_DEVICE_ACCESS_TOKEN" \
+      -m '{"ts": 1609459200000, "values": {"temperature": 23.5, "humidity": 65}}'
+    ```
+  </Tab>
+  <Tab title="Batch (array)">
+    ```bash
+    mosquitto_pub -d -q 1 \
+      -h "thingsboard.example.com" \
+      -p 1883 \
+      -t "v1/devices/me/telemetry" \
+      -u "YOUR_DEVICE_ACCESS_TOKEN" \
+      -m '[{"ts":1609459200000,"values":{"temperature":23.5}},{"ts":1609459260000,"values":{"temperature":24.1}}]'
+    ```
+  </Tab>
+  <Tab title="Python (paho-mqtt)">
+    ```python
+    import paho.mqtt.client as mqtt
+    import json
+    import time
+
+    ACCESS_TOKEN = "YOUR_DEVICE_ACCESS_TOKEN"
+    BROKER_HOST = "thingsboard.example.com"
+    BROKER_PORT = 1883
+
+    def on_connect(client, userdata, flags, rc):
+        if rc == 0:
+            print("Connected successfully")
+        else:
+            print(f"Connection failed with code {rc}")
+
+    client = mqtt.Client()
+    client.username_pw_set(ACCESS_TOKEN)
+    client.on_connect = on_connect
+
+    client.connect(BROKER_HOST, BROKER_PORT, keepalive=60)
+    client.loop_start()
+
+    # Publish telemetry
+    telemetry = {
+        "temperature": 23.5,
+        "humidity": 65,
+        "ts": int(time.time() * 1000)
+    }
+    client.publish("v1/devices/me/telemetry", json.dumps(telemetry), qos=1)
+
+    time.sleep(1)
+    client.loop_stop()
+    client.disconnect()
+    ```
+  </Tab>
+</Tabs>
+
+## Updating Client Attributes
+
+Publish a JSON object to `v1/devices/me/attributes` to set or update client-side device attributes.
+
+```bash
+mosquitto_pub -d -q 1 \
+  -h "thingsboard.example.com" \
+  -p 1883 \
+  -t "v1/devices/me/attributes" \
+  -u "YOUR_DEVICE_ACCESS_TOKEN" \
+  -m '{"firmwareVersion": "1.2.3", "serialNumber": "SN-00042"}'
+```
+
+## Requesting Attributes
+
+To request server-side or shared attributes, publish to `v1/devices/me/attributes/request/{requestId}` and subscribe to the wildcard response topic first.
+
+<Steps>
+  <Step title="Subscribe to responses">
+    ```bash
+    mosquitto_sub -d \
+      -h "thingsboard.example.com" \
+      -p 1883 \
+      -t "v1/devices/me/attributes/response/+" \
+      -u "YOUR_DEVICE_ACCESS_TOKEN"
+    ```
+  </Step>
+  <Step title="Send the attribute request">
+    ```bash
+    mosquitto_pub -d -q 1 \
+      -h "thingsboard.example.com" \
+      -p 1883 \
+      -t "v1/devices/me/attributes/request/1" \
+      -u "YOUR_DEVICE_ACCESS_TOKEN" \
+      -m '{"clientKeys": "firmwareVersion", "sharedKeys": "targetFirmware"}'
+    ```
+  </Step>
+</Steps>
+
+The response will be delivered to `v1/devices/me/attributes/response/1` as a JSON object containing the requested keys.
+
+## Receiving RPC Commands
+
+Subscribe to `v1/devices/me/rpc/request/+` to receive server-initiated RPC commands. After processing the command, publish the result back to `v1/devices/me/rpc/response/{requestId}`.
+
+```bash
+# Terminal 1 – subscribe
+mosquitto_sub -d \
+  -h "thingsboard.example.com" \
+  -p 1883 \
+  -t "v1/devices/me/rpc/request/+" \
+  -u "YOUR_DEVICE_ACCESS_TOKEN"
+
+# Terminal 2 – reply to requestId=5
+mosquitto_pub -d -q 1 \
+  -h "thingsboard.example.com" \
+  -p 1883 \
+  -t "v1/devices/me/rpc/response/5" \
+  -u "YOUR_DEVICE_ACCESS_TOKEN" \
+  -m '{"result": "ok"}'
+```
+
+The RPC request payload from ThingsBoard contains the method name and parameters:
+
+```json
+{
+  "method": "setLedState",
+  "params": {
+    "state": true
+  }
+}
+```
+
+## TLS/SSL Connection
+
+To connect over TLS on port 8883, supply the CA certificate used to sign the ThingsBoard server certificate.
+
+```bash
+mosquitto_pub -d -q 1 \
+  -h "thingsboard.example.com" \
+  -p 8883 \
+  --cafile /path/to/ca.pem \
+  -t "v1/devices/me/telemetry" \
+  -u "YOUR_DEVICE_ACCESS_TOKEN" \
+  -m '{"temperature": 23.5}'
+```
+
+For mutual TLS (client certificate authentication), add `--cert` and `--key` flags pointing to the device certificate and private key files.
+
+## Gateway API
+
+ThingsBoard gateways aggregate data from multiple downstream devices. The gateway connects with its own access token and uses the `v1/gateway` topic prefix, including the target device name in the payload.
+
+```bash
+# Announce that device "Sensor-001" is connected
+mosquitto_pub -d -q 1 \
+  -h "thingsboard.example.com" \
+  -p 1883 \
+  -t "v1/gateway/connect" \
+  -u "YOUR_GATEWAY_ACCESS_TOKEN" \
+  -m '{"device": "Sensor-001"}'
+
+# Send telemetry on behalf of "Sensor-001"
+mosquitto_pub -d -q 1 \
+  -h "thingsboard.example.com" \
+  -p 1883 \
+  -t "v1/gateway/telemetry" \
+  -u "YOUR_GATEWAY_ACCESS_TOKEN" \
+  -m '{"Sensor-001": [{"ts": 1609459200000, "values": {"temperature": 22.1}}]}'
+```
+
+<Note>
+  ThingsBoard also supports **MQTT over WebSocket** on port **8084** (and WSS on 8085 when TLS is configured). Use a WebSocket-capable MQTT client or browser library such as MQTT.js to connect. The topic structure and authentication method are identical to plain MQTT.
+</Note>

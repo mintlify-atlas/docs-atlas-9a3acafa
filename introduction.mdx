@@ -1,0 +1,103 @@
+---
+title: "ThingsBoard: Open-Source IoT Platform Overview"
+sidebarTitle: "Introduction"
+description: "ThingsBoard is an open-source IoT platform for device management, real-time telemetry collection, visualization, and automation. Runs on-premises or in the cloud."
+---
+
+ThingsBoard is an all-in-one open-source IoT platform that handles device management, real-time data collection, visualization, and event-driven automation in a single deployable unit. Whether you are building a smart-energy dashboard, a fleet-tracking solution, or an industrial SCADA system, ThingsBoard gives you the connectivity, storage, and processing primitives to go from prototype to production without stitching together a dozen separate tools. It can be deployed entirely on-premises, run in any cloud, or accessed as a fully managed cloud service.
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Device Management" icon="microchip">
+    Provision, monitor, and control thousands of IoT devices and assets securely through rich server-side APIs. Define hierarchical relations between devices, assets, customers, and any other entity to mirror your real-world topology.
+  </Card>
+  <Card title="Real-Time Telemetry" icon="chart-line">
+    Collect and store time-series and attribute data in a scalable, fault-tolerant way. Query telemetry with flexible time-window aggregations and stream live updates to dashboards over WebSocket.
+  </Card>
+  <Card title="Rule Engine" icon="bolt">
+    Build visual rule chains to transform incoming data, raise alarms on threshold breaches, trigger RPC commands, and integrate with external systems — all without writing backend code. Calculated fields compute KPIs and aggregates in real time.
+  </Card>
+  <Card title="Dashboards & SCADA" icon="gauge">
+    Create pixel-perfect, real-time dashboards using 50+ built-in widgets. Use purpose-built SCADA symbols to design operational displays for industrial processes. Share dashboards with specific customers or embed them in external applications.
+  </Card>
+  <Card title="Multi-Tenancy" icon="building">
+    A single ThingsBoard instance supports unlimited tenants and customers. Each tenant is fully isolated — separate devices, dashboards, rule chains, users, and rate limits — making it ideal for SaaS IoT products.
+  </Card>
+  <Card title="ThingsBoard Edge" icon="network-wired">
+    Run a subset of ThingsBoard features at the network edge, on-site or in constrained environments. Edge nodes synchronize data and rule chains with the cloud instance, enabling offline operation and local decision-making.
+  </Card>
+</CardGroup>
+
+## Architecture Modes
+
+ThingsBoard ships as a single Spring Boot application (`ThingsboardServerApplication`) and supports two deployment topologies.
+
+### Monolith (Single-Node)
+
+All services — HTTP/MQTT/CoAP transport, rule engine, core API, and UI — run inside one JVM process. The message queue defaults to `in-memory` (`TB_QUEUE_TYPE=in-memory`), so no external broker is required. This is the recommended starting point for development, small deployments, and teams evaluating the platform.
+
+```
+┌──────────────────────────────────────────────────────┐
+│                ThingsBoard Monolith                   │
+│  Transport ─► In-Memory Queue ─► Rule Engine ─► DB   │
+│         REST API / WebSocket / UI (port 8080)         │
+└──────────────────────────────────────────────────────┘
+         │                              │
+    PostgreSQL                   (optional)
+                               Cassandra / TimescaleDB
+```
+
+### Microservices (MSA)
+
+For high-throughput production workloads, the platform can be split into independently scalable services: `tb-core`, `tb-rule-engine`, transport microservices, and integration executors. In this mode, Apache Kafka (`TB_QUEUE_TYPE=kafka`) replaces the in-memory queue, and ZooKeeper (`ZOOKEEPER_ENABLED=true`) handles service discovery and partition assignment. Each service is packaged as a separate Docker image under the `thingsboard/` namespace.
+
+## Supported Transport Protocols
+
+ThingsBoard provides native support for the most common IoT connectivity standards. Every protocol is independently enabled or disabled via environment variables and maps device data to the same unified data model.
+
+| Protocol | Default Port | Config Key |
+|----------|-------------|-----------|
+| **HTTP** | 8080 (shared) | `HTTP_ENABLED` |
+| **MQTT** | 1883 (plain), 8883 (TLS) | `MQTT_ENABLED`, `MQTT_BIND_PORT` |
+| **CoAP** | UDP (standalone server) | `COAP_ENABLED`, `COAP_SERVER_ENABLED` |
+| **LwM2M** | 5685 (plain), 5686 (DTLS) | `LWM2M_ENABLED`, `LWM2M_BIND_PORT` |
+| **SNMP** | configurable via `SNMP_BIND_PORT` | `SNMP_ENABLED` |
+
+<Info>
+  All transport endpoints funnel data into the same internal pipeline. A device sending telemetry over MQTT and one sending over HTTP are indistinguishable at the rule engine level.
+</Info>
+
+## Data Model
+
+ThingsBoard organises all data around a small set of first-class concepts.
+
+### Entities
+
+Everything in ThingsBoard is an **entity**: `Device`, `Asset`, `Tenant`, `Customer`, `User`, `Dashboard`, `Rule Chain`, and more. Every entity has a globally unique UUID and belongs to a tenant.
+
+### Attributes
+
+Attributes are key-value pairs attached to an entity. ThingsBoard distinguishes three scopes:
+
+- **Server-side attributes** — set and read only by the server (e.g., customer tier, location).
+- **Client-side attributes** — reported by the device itself (e.g., firmware version, hardware revision).
+- **Shared attributes** — writable by the server and readable by the device (e.g., desired configuration, polling interval).
+
+### Telemetry
+
+Time-series data is stored as a sequence of `(timestamp, key, value)` tuples. ThingsBoard supports numeric, boolean, string, and JSON value types. The storage backend is configurable: SQL (PostgreSQL / TimescaleDB) for `DATABASE_TS_TYPE=sql` or Apache Cassandra for `DATABASE_TS_TYPE=cassandra`.
+
+### Relations
+
+Entities are connected to each other via typed, directed **relations** (e.g., `Device` → `Asset` via `Contains`, `Asset` → `Customer` via `Manages`). Relations are the foundation for building digital twins and hierarchical asset topologies.
+
+## Licensing
+
+Starting with version 4.4, ThingsBoard is licensed under the [Business Source License 1.1](https://github.com/thingsboard/thingsboard/blob/master/LICENSE) (BUSL-1.1). You may read, build, modify, and redistribute the code. Production use is free within the limits of the Additional Use Grant; beyond those limits, or to remove ThingsBoard branding, a commercial license is required. Every release automatically converts to Apache 2.0 four years after it ships. Versions released before 4.4 remain under the Apache 2.0 License.
+
+## Next Steps
+
+<Card title="Quickstart — Connect Your First Device" icon="rocket" href="/quickstart">
+  Get a device sending telemetry and a live dashboard running in under 10 minutes.
+</Card>

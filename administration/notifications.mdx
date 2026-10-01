@@ -1,0 +1,196 @@
+---
+title: "ThingsBoard Notifications: Alarms, Email, SMS, and Slack"
+sidebarTitle: "Notifications"
+description: "ThingsBoard sends notifications through multiple channels — email, SMS, Slack, Microsoft Teams, mobile push, and webhook. Configure notification rules to trigger on alarms, device events, and entity changes."
+---
+
+ThingsBoard's notification system lets you route alerts and operational events to the people and tools that need them. A notification moves through three objects — a **template** (what to say), a **target** (who to notify), and a **rule** (when to fire) — and is then dispatched over one or more **delivery channels** such as email, SMS, Slack, or in-app web notifications. All of these are managed from **Notification Center** in the left navigation.
+
+## Notification Channels
+
+ThingsBoard ships with six built-in delivery channels, defined in `NotificationDeliveryMethod`:
+
+<CardGroup cols={3}>
+  <Card title="Web (in-app)" icon="bell">
+    Delivered over the persistent WebSocket connection every logged-in user maintains. Appears in the notification bell in the top navigation bar with no extra configuration.
+  </Card>
+  <Card title="Email" icon="envelope">
+    Uses the SMTP server configured in System Settings. Supports HTML bodies, inline images, and report attachments. Also supports OAuth2 token refresh for providers like Office 365.
+  </Card>
+  <Card title="SMS" icon="mobile">
+    Routes through the tenant's SMS gateway (Twilio, AWS SNS). Requires an active SMS provider configured in the System Settings → SMS Provider section.
+  </Card>
+  <Card title="Slack" icon="slack">
+    Posts messages to Slack channels or direct messages using a Slack Bot token. Configured per notification target with the workspace token and conversation ID.
+  </Card>
+  <Card title="Microsoft Teams" icon="microsoft">
+    Sends Adaptive Cards or legacy MessageCard payloads to a Teams channel webhook URL. Configured per notification target.
+  </Card>
+  <Card title="Mobile Push" icon="device-mobile">
+    Pushes Firebase Cloud Messaging (FCM) notifications to the ThingsBoard mobile app. Requires a Firebase project with a server key configured in System Settings.
+  </Card>
+</CardGroup>
+
+## Notification Triggers
+
+Notification rules fire on events defined in `NotificationRuleTriggerType`. Tenant-level triggers fire within the context of a single tenant; system-level triggers (marked below) are available to the system administrator only.
+
+| Trigger Type | Level | Description |
+|---|---|---|
+| `ALARM` | Tenant | Alarm created, cleared, acknowledged, or severity changed |
+| `ALARM_COMMENT` | Tenant | Comment added to an alarm |
+| `ALARM_ASSIGNMENT` | Tenant | Alarm assigned to or unassigned from a user |
+| `DEVICE_ACTIVITY` | Tenant | Device becomes active or inactive |
+| `ENTITY_ACTION` | Tenant | Entity (device, asset, etc.) created, updated, or deleted |
+| `RULE_ENGINE_COMPONENT_LIFECYCLE_EVENT` | Tenant | Rule chain or rule node started, stopped, or failed |
+| `INTEGRATION_LIFECYCLE_EVENT` | Tenant | Integration connected or disconnected |
+| `EDGE_CONNECTION` | Tenant | Edge instance connected or disconnected |
+| `EDGE_COMMUNICATION_FAILURE` | Tenant | Persistent communication error with an Edge node |
+| `NEW_PLATFORM_VERSION` | System | A new ThingsBoard release is available |
+| `ENTITIES_LIMIT` | System | A tenant is approaching its entity count limit |
+| `API_USAGE_LIMIT` | System | A tenant is approaching or has hit an API usage limit |
+| `RATE_LIMITS` | System | Rate limits triggered for a tenant |
+| `RESOURCES_SHORTAGE` | System | Server CPU, memory, or disk running low |
+
+## Notification Templates
+
+Templates define the content of a notification. Each template can carry per-channel bodies so that an email gets a rich HTML layout while the Slack message gets a concise one-liner.
+
+Templates support **FreeMarker** variable substitution. Common variables available in alarm-triggered templates:
+
+| Variable | Example Value |
+|---|---|
+| `${alarmType}` | `HighTemperature` |
+| `${alarmSeverity}` | `CRITICAL` |
+| `${alarmStatus}` | `ACTIVE_UNACK` |
+| `${deviceName}` | `Boiler-01` |
+| `${deviceType}` | `Boiler` |
+| `${tenantName}` | `Acme Corp` |
+| `${recipientEmail}` | `ops@acme.com` |
+| `${recipientFirstName}` | `Alice` |
+
+Example Slack template body:
+
+```
+🚨 *${alarmType}* alarm on device *${deviceName}*
+Severity: ${alarmSeverity} | Status: ${alarmStatus}
+```
+
+Example email subject template:
+
+```
+[${alarmSeverity}] ${alarmType} — ${deviceName}
+```
+
+## Notification Targets
+
+A target defines **who** receives the notification. ThingsBoard supports three target categories:
+
+- **Platform Users** — filter by role (system admins, tenant admins, customer users, all users in a tenant, or a specific user group).
+- **Slack Conversation** — a Slack channel or DM identified by workspace token and conversation ID.
+- **Microsoft Teams Channel** — a Teams webhook URL.
+
+Targets are reusable across multiple notification rules.
+
+## SMTP Email Configuration
+
+Email delivery is configured through the System Settings UI, not directly in `thingsboard.yml`. The values stored in the database at runtime (and set through the UI) map to these `TbMailSender` fields:
+
+| UI Field | JSON key | Example |
+|---|---|---|
+| SMTP Host | `smtpHost` | `smtp.gmail.com` |
+| SMTP Port | `smtpPort` | `587` |
+| Protocol | `smtpProtocol` | `smtp` |
+| From address | `mailFrom` | `noreply@acme.com` |
+| Username | `username` | `noreply@acme.com` |
+| Password | `password` | *(app password or OAuth2 token)* |
+| Enable TLS | `enableTls` | `true` |
+| Enable OAuth2 | `enableOauth2` | `false` |
+| Timeout (ms) | `timeout` | `10000` |
+
+Refresh token validity for OAuth2-protected mail providers (e.g., Office 365) is checked on this schedule:
+
+```yaml
+mail:
+  oauth2:
+    refreshTokenCheckingInterval: "${REFRESH_TOKEN_EXPIRATION_CHECKING_INTERVAL:86400}" # seconds (1 day)
+```
+
+Per-tenant email rate limiting is controlled by:
+
+```yaml
+mail:
+  per_tenant_rate_limits: "${MAIL_PER_TENANT_RATE_LIMITS:}"
+  # e.g. "1000:60,10000:3600" = max 1000/minute AND 10000/hour
+```
+
+## Notification System Thread Pool
+
+The notification processing thread pool size is tunable:
+
+```yaml
+notification_system:
+  thread_pool_size: "${TB_NOTIFICATION_SYSTEM_THREAD_POOL_SIZE:10}"
+  rules:
+    deduplication_durations: "${TB_NOTIFICATION_RULES_DEDUPLICATION_DURATIONS:NEW_PLATFORM_VERSION:0;RATE_LIMITS:14400000;}"
+```
+
+Deduplication durations prevent the same rule from firing repeatedly in a short window. The default suppresses `RATE_LIMITS` notifications for 4 hours (14,400,000 ms) after the first alert.
+
+## Example: Critical Alarm → Email + Slack
+
+The following example sets up a notification that sends both an email and a Slack message whenever a `CRITICAL` alarm is created.
+
+<Steps>
+  <Step title="Configure SMTP in System Settings">
+    Navigate to **System Settings → Mail Server**. Fill in your SMTP host, port, credentials, and test the connection with the **Send test email** button. Click **Save**.
+  </Step>
+  <Step title="Create a Notification Template">
+    Go to **Notification Center → Templates** → **Add template**.
+
+    - **Name:** `Critical Alarm Alert`
+    - **Notification type:** `Alarm`
+
+    Configure two delivery methods:
+
+    **Email:**
+    - Subject: `[CRITICAL] ${alarmType} on ${deviceName}`
+    - Body (HTML):
+      ```html
+      <p>A <strong>${alarmSeverity}</strong> alarm of type <strong>${alarmType}</strong>
+      was triggered on device <strong>${deviceName}</strong>.</p>
+      <p>Status: ${alarmStatus}</p>
+      ```
+
+    **Slack:**
+    - Body: `:rotating_light: *${alarmType}* on *${deviceName}* — severity: ${alarmSeverity}`
+
+    Click **Save**.
+  </Step>
+  <Step title="Create a Notification Target">
+    Go to **Notification Center → Targets** → **Add target**.
+
+    - **Name:** `Tenant Admins`
+    - **Type:** `Platform users`
+    - **Users filter:** `Tenant administrators`
+
+    For the Slack channel, add a second target of type **Slack** with the bot token and channel ID.
+
+    Click **Save**.
+  </Step>
+  <Step title="Create a Notification Rule">
+    Go to **Notification Center → Rules** → **Add rule**.
+
+    - **Name:** `Critical Alarm Alert Rule`
+    - **Trigger:** `Alarm`
+    - **Alarm filter:** Severity = `CRITICAL`, Event = `Alarm created`
+    - **Template:** `Critical Alarm Alert`
+    - **Recipients:** `Tenant Admins` (email) + your Slack target
+
+    Click **Save**. The rule activates immediately.
+  </Step>
+</Steps>
+
+<Tip>
+  For more complex notification routing — such as sending different messages based on alarm type, device label, or customer hierarchy — use the **Rule Engine** instead of (or in addition to) notification rules. The **Send Notification** rule node lets you trigger notifications programmatically as part of any rule chain, with full access to the message metadata and FreeMarker templates. This is the recommended approach when you need conditional logic, enrichment from external systems, or multi-step escalation workflows.
+</Tip>

@@ -1,0 +1,249 @@
+---
+title: "Configure ThingsBoard: Server, Database, and Queue Settings"
+sidebarTitle: "Configuration"
+description: "ThingsBoard is configured via thingsboard.yml and environment variables. Key settings cover the HTTP server, database connections, transport protocols, queue backends, and rate limits."
+---
+
+ThingsBoard reads all of its runtime configuration from `thingsboard.yml`, located at `/etc/thingsboard/conf/thingsboard.yml` in a standard Linux installation. Every value in the file follows the pattern `"${ENV_VAR:default}"`, which means you can override any setting by exporting an environment variable — no file edits required. This 12-factor-style approach makes ThingsBoard straightforward to deploy in containers and orchestrated environments where configuration is injected at runtime.
+
+<Note>
+  Every YAML key can be overridden with an environment variable using the `UPPER_SNAKE_CASE` naming convention derived from the key hierarchy. For example, `server.port` becomes `HTTP_BIND_PORT`, and `spring.datasource.url` becomes `SPRING_DATASOURCE_URL`. Check the inline comments in `thingsboard.yml` for the exact variable name for each property.
+</Note>
+
+## Server Settings
+
+The `server` block in `thingsboard.yml` configures the embedded Tomcat/Netty HTTP server.
+
+```yaml
+server:
+  address: "${HTTP_BIND_ADDRESS:0.0.0.0}"
+  port: "${HTTP_BIND_PORT:8080}"
+  forward_headers_strategy: "${HTTP_FORWARD_HEADERS_STRATEGY:framework}"
+  ssl:
+    enabled: "${SSL_ENABLED:false}"
+    credentials:
+      type: "${SSL_CREDENTIALS_TYPE:PEM}"   # PEM or KEYSTORE
+      pem:
+        cert_file: "${SSL_PEM_CERT:server.pem}"
+        key_file: "${SSL_PEM_KEY:server_key.pem}"
+        key_password: "${SSL_PEM_KEY_PASSWORD:server_key_password}"
+      keystore:
+        type: "${SSL_KEY_STORE_TYPE:PKCS12}"
+        store_file: "${SSL_KEY_STORE:classpath:keystore/keystore.p12}"
+        store_password: "${SSL_KEY_STORE_PASSWORD:thingsboard}"
+        key_alias: "${SSL_KEY_ALIAS:tomcat}"
+        key_password: "${SSL_KEY_PASSWORD:thingsboard}"
+  http2:
+    enabled: "${HTTP2_ENABLED:true}"   # only effective when SSL is enabled
+  compression:
+    enabled: "${HTTP_COMPRESSION_ENABLED:false}"
+    min_response_size: "${HTTP_COMPRESSION_MIN_RESPONSE_SIZE:2048}"
+```
+
+<CardGroup cols={2}>
+  <Card title="HTTPS / TLS" icon="lock">
+    Set `SSL_ENABLED=true` and provide either PEM files (`SSL_PEM_CERT`, `SSL_PEM_KEY`) or a PKCS12/JKS keystore (`SSL_KEY_STORE`). HTTP/2 is automatically enabled alongside TLS.
+  </Card>
+  <Card title="Reverse Proxy" icon="server">
+    When ThingsBoard sits behind Nginx or another proxy, set `HTTP_FORWARD_HEADERS_STRATEGY=framework` (the default) so that `X-Forwarded-For` and `X-Forwarded-Proto` headers are respected. This is required for correct Swagger UI links.
+  </Card>
+</CardGroup>
+
+### WebSocket Settings
+
+Real-time dashboard widgets communicate over WebSocket. The relevant tunables live under `server.ws`:
+
+```yaml
+server:
+  ws:
+    send_timeout: "${TB_SERVER_WS_SEND_TIMEOUT:5000}"          # ms
+    ping_timeout: "${TB_SERVER_WS_PING_TIMEOUT:30000}"         # ms; >= 30 s recommended
+    max_entities_per_data_subscription: "${TB_SERVER_WS_MAX_ENTITIES_PER_DATA_SUBSCRIPTION:10000}"
+    max_entities_per_alarm_subscription: "${TB_SERVER_WS_MAX_ENTITIES_PER_ALARM_SUBSCRIPTION:10000}"
+    max_queue_messages_per_session: "${TB_SERVER_WS_DEFAULT_QUEUE_MESSAGES_PER_SESSION:1000}"
+    auth_timeout_ms: "${TB_SERVER_WS_AUTH_TIMEOUT_MS:10000}"
+    rate_limits:
+      subscriptions_per_tenant: "${TB_SERVER_WS_SUBSCRIPTIONS_PER_TENANT_RATE_LIMIT:}"
+      subscriptions_per_user: "${TB_SERVER_WS_SUBSCRIPTIONS_PER_USER_RATE_LIMIT:}"
+```
+
+## Database Settings
+
+ThingsBoard uses **PostgreSQL** for entities and relational data, and a separately configurable backend for time-series telemetry.
+
+### PostgreSQL Connection
+
+```yaml
+spring:
+  datasource:
+    driverClassName: "${SPRING_DRIVER_CLASS_NAME:org.postgresql.Driver}"
+    url: "${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/thingsboard}"
+    username: "${SPRING_DATASOURCE_USERNAME:postgres}"
+    password: "${SPRING_DATASOURCE_PASSWORD:postgres}"
+    hikari:
+      maximumPoolSize: "${SPRING_DATASOURCE_MAXIMUM_POOL_SIZE:16}"
+      leakDetectionThreshold: "${SPRING_DATASOURCE_HIKARI_LEAK_DETECTION_THRESHOLD:0}"
+```
+
+### Time-Series Backend
+
+The `DATABASE_TS_TYPE` variable controls where telemetry data is stored:
+
+<Tabs>
+  <Tab title="PostgreSQL (default)">
+    ```bash
+    DATABASE_TS_TYPE=sql
+    ```
+    Time-series rows are written to the same PostgreSQL database as the entity store. Partitioning is managed automatically:
+    ```yaml
+    sql:
+      postgres:
+        ts_key_value_partitioning: "${SQL_POSTGRES_TS_KV_PARTITIONING:MONTHS}"
+    ```
+  </Tab>
+  <Tab title="TimescaleDB">
+    ```bash
+    DATABASE_TS_TYPE=timescale
+    ```
+    Requires a TimescaleDB-enabled PostgreSQL instance. Chunk interval is configurable:
+    ```yaml
+    sql:
+      timescale:
+        chunk_time_interval: "${SQL_TIMESCALE_CHUNK_TIME_INTERVAL:604800000}"  # 1 week in ms
+    ```
+  </Tab>
+  <Tab title="Apache Cassandra">
+    ```bash
+    DATABASE_TS_TYPE=cassandra
+    CASSANDRA_URL=127.0.0.1:9042
+    CASSANDRA_KEYSPACE_NAME=thingsboard
+    CASSANDRA_CLUSTER_NAME=Thingsboard Cluster
+    ```
+    Cassandra handles high-throughput time-series at scale. Key tuning settings:
+    ```yaml
+    cassandra:
+      query:
+        read_consistency_level: "${CASSANDRA_READ_CONSISTENCY_LEVEL:ONE}"
+        write_consistency_level: "${CASSANDRA_WRITE_CONSISTENCY_LEVEL:ONE}"
+        ts_key_value_partitioning: "${TS_KV_PARTITIONING:MONTHS}"
+    ```
+  </Tab>
+</Tabs>
+
+## Queue Backends
+
+ThingsBoard uses an internal message queue to decouple transport, rule engine, and core services. The default **in-memory** queue is suitable for single-node development. For production or clustered deployments, switch to Kafka.
+
+```yaml
+queue:
+  type: "${TB_QUEUE_TYPE:in-memory}"  # in-memory or kafka
+```
+
+<Tabs>
+  <Tab title="In-Memory">
+    No additional configuration required. All messages are processed within the same JVM. Not suitable for clustered or microservice deployments.
+
+    ```bash
+    TB_QUEUE_TYPE=in-memory
+    ```
+  </Tab>
+  <Tab title="Apache Kafka">
+    ```bash
+    TB_QUEUE_TYPE=kafka
+    TB_KAFKA_SERVERS=kafka1:9092,kafka2:9092
+    TB_KAFKA_ACKS=all
+    TB_KAFKA_RETRIES=1
+    TB_QUEUE_KAFKA_REPLICATION_FACTOR=1
+    ```
+
+    Key Kafka producer/consumer settings in `thingsboard.yml`:
+    ```yaml
+    queue:
+      kafka:
+        bootstrap.servers: "${TB_KAFKA_SERVERS:localhost:9092}"
+        acks: "${TB_KAFKA_ACKS:all}"
+        retries: "${TB_KAFKA_RETRIES:1}"
+        batch.size: "${TB_KAFKA_BATCH_SIZE:16384}"
+        linger.ms: "${TB_KAFKA_LINGER_MS:1}"
+        max.request.size: "${TB_KAFKA_MAX_REQUEST_SIZE:1048576}"
+        buffer.memory: "${TB_BUFFER_MEMORY:33554432}"
+        replication_factor: "${TB_QUEUE_KAFKA_REPLICATION_FACTOR:1}"
+        max_poll_records: "${TB_QUEUE_KAFKA_MAX_POLL_RECORDS:8192}"
+    ```
+
+    Confluent Cloud is also supported via the `queue.kafka.confluent` sub-section with `SASL_SSL` and optional OAuth2/OIDC client-credentials.
+  </Tab>
+</Tabs>
+
+## Key Environment Variable Reference
+
+| Variable | Default | Description |
+|---|---|---|
+| `HTTP_BIND_ADDRESS` | `0.0.0.0` | Server bind address |
+| `HTTP_BIND_PORT` | `8080` | HTTP port |
+| `SSL_ENABLED` | `false` | Enable HTTPS |
+| `MQTT_BIND_PORT` | `1883` | MQTT plaintext port |
+| `MQTT_SSL_BIND_PORT` | `8883` | MQTT TLS port |
+| `COAP_BIND_PORT` | `5683` | CoAP UDP port |
+| `DATABASE_TS_TYPE` | `sql` | Time-series backend: `sql`, `cassandra`, or `timescale` |
+| `TB_QUEUE_TYPE` | `in-memory` | Message queue: `in-memory` or `kafka` |
+| `SPRING_DATASOURCE_URL` | `jdbc:postgresql://localhost:5432/thingsboard` | PostgreSQL JDBC URL |
+| `SPRING_DATASOURCE_USERNAME` | `postgres` | PostgreSQL username |
+| `SPRING_DATASOURCE_PASSWORD` | `postgres` | PostgreSQL password |
+| `SPRING_DATASOURCE_MAXIMUM_POOL_SIZE` | `16` | HikariCP max pool size |
+| `TB_KAFKA_SERVERS` | `localhost:9092` | Kafka bootstrap servers |
+| `ZOOKEEPER_ENABLED` | `false` | Enable ZooKeeper for cluster coordination |
+| `ZOOKEEPER_URL` | `localhost:2181` | ZooKeeper connect string |
+
+## Rate Limiting
+
+ThingsBoard exposes rate-limit controls at several layers to protect the platform from overload.
+
+### WebSocket Subscriptions
+
+```yaml
+server:
+  ws:
+    rate_limits:
+      subscriptions_per_tenant: "${TB_SERVER_WS_SUBSCRIPTIONS_PER_TENANT_RATE_LIMIT:}"
+      subscriptions_per_user: "${TB_SERVER_WS_SUBSCRIPTIONS_PER_USER_RATE_LIMIT:}"
+```
+
+Leave the values empty (the default) to apply no limit. To restrict, use the `count:seconds` format — for example `100:1` means 100 subscriptions per second.
+
+### Password Reset Rate Limit
+
+```yaml
+server:
+  rest:
+    rate_limits:
+      reset_password_per_user: "${RESET_PASSWORD_PER_USER_RATE_LIMIT_CONFIGURATION:5:3600}"
+```
+
+The default allows no more than 5 password-reset requests per user per hour.
+
+### Rule Engine Debug Mode
+
+```yaml
+actors:
+  rule:
+    debug_mode_rate_limits_per_tenant:
+      enabled: "${ACTORS_RULE_CHAIN_DEBUG_MODE_RATE_LIMITS_PER_TENANT_ENABLED:true}"
+      configuration: "${ACTORS_RULE_CHAIN_DEBUG_MODE_RATE_LIMITS_PER_TENANT_CONFIGURATION:50000:3600}"
+```
+
+By default ThingsBoard persists no more than 50,000 debug events per tenant per hour to prevent log flooding during development.
+
+## Transport Protocol Ports
+
+ThingsBoard bundles multiple IoT transport protocols. All can be configured independently:
+
+| Protocol | Default Port | Enable Variable |
+|---|---|---|
+| HTTP/HTTPS | `8080` / `8443` | Always on |
+| MQTT | `1883` | `MQTT_BIND_PORT` |
+| MQTT over TLS | `8883` | `MQTT_SSL_ENABLED=true` |
+| CoAP | `5683` (UDP) | `COAP_BIND_PORT` |
+| CoAP DTLS | `5684` (UDP) | Configured under `coap.dtls` |
+| LwM2M | `5685` (UDP) | Configured under `transport.lwm2m` |
+

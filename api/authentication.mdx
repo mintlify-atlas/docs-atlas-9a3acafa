@@ -1,0 +1,245 @@
+---
+title: "Authenticate with the ThingsBoard REST API"
+sidebarTitle: "Authentication"
+description: "ThingsBoard REST API uses JWT Bearer tokens. Obtain a token by posting credentials to /api/auth/login and include it in the Authorization header on every request."
+---
+
+Every ThingsBoard REST API call — except for the handful of routes under `/api/noauth/` — requires a valid JSON Web Token (JWT). Tokens are short-lived credentials that encode the caller's identity and role. This page explains how to obtain a token, attach it to requests, refresh it before it expires, and understand the role-based access model that governs what each token can do.
+
+## Login
+
+Exchange a username and password for a JWT token pair by posting to the login endpoint.
+
+<Steps>
+  <Step title="POST credentials to /api/auth/login">
+    ```
+    POST /api/auth/login
+    Content-Type: application/json
+    ```
+
+    **Request body:**
+
+    ```json
+    {
+      "username": "tenant@example.com",
+      "password": "password"
+    }
+    ```
+
+    <ParamField body="username" type="string" required>
+      The user's email address. ThingsBoard uses email as the unique login identifier for all roles.
+    </ParamField>
+
+    <ParamField body="password" type="string" required>
+      The user's plaintext password. Transmitted over HTTPS; never stored in plain text by the server.
+    </ParamField>
+  </Step>
+
+  <Step title="Receive the JWT token pair">
+    A successful login returns HTTP `200 OK` with a JSON body containing both tokens:
+
+    ```json
+    {
+      "token": "eyJhbGciOiJSUzUxMiJ9...",
+      "refreshToken": "eyJhbGciOiJSUzUxMiJ9..."
+    }
+    ```
+
+    <ResponseField name="token" type="string">
+      The JWT **access token**. Include this in the `Authorization` header on every subsequent API request. Valid for **9,000 seconds (2.5 hours)** by default.
+    </ResponseField>
+
+    <ResponseField name="refreshToken" type="string">
+      The JWT **refresh token**. Exchange this for a new access token when the access token expires. Valid for **604,800 seconds (1 week)** by default.
+    </ResponseField>
+  </Step>
+
+  <Step title="Attach the token to every request">
+    Pass the access token in the `Authorization` header using the `Bearer` scheme:
+
+    ```
+    Authorization: Bearer eyJhbGciOiJSUzUxMiJ9...
+    ```
+
+    All protected endpoints validate this header and reject requests that omit it or carry an expired token with `401 Unauthorized`.
+  </Step>
+</Steps>
+
+## curl Examples
+
+The snippets below show the full login-then-use workflow from a terminal.
+
+<Tabs>
+  <Tab title="Login and use token">
+    ```bash
+    # Login and capture the access token
+    TOKEN=$(curl -s -X POST 'http://localhost:8080/api/auth/login' \
+      -H 'Content-Type: application/json' \
+      -d '{"username":"tenant@thingsboard.org","password":"tenant"}' \
+      | python3 -m json.tool | grep '"token"' | cut -d'"' -f4)
+
+    # Use the token to list the first 10 devices for this tenant
+    curl -X GET 'http://localhost:8080/api/tenant/devices?pageSize=10&page=0' \
+      -H "Authorization: Bearer $TOKEN"
+    ```
+  </Tab>
+  <Tab title="Store token in a variable (jq)">
+    ```bash
+    # Requires jq — a lightweight JSON processor
+    TOKEN=$(curl -s -X POST 'http://localhost:8080/api/auth/login' \
+      -H 'Content-Type: application/json' \
+      -d '{"username":"tenant@thingsboard.org","password":"tenant"}' \
+      | jq -r '.token')
+
+    echo "Logged in. Token: ${TOKEN:0:30}..."
+
+    # Fetch the current authenticated user's profile
+    curl -s -X GET 'http://localhost:8080/api/auth/user' \
+      -H "Authorization: Bearer $TOKEN" \
+      | jq .
+    ```
+  </Tab>
+</Tabs>
+
+## Get Current User Info
+
+Once authenticated, retrieve the profile of the user whose token is being used:
+
+```
+GET /api/auth/user
+Authorization: Bearer {token}
+```
+
+**Example response:**
+
+```json
+{
+  "id": { "entityType": "USER", "id": "784f394c-42b6-7654-902f-123456789012" },
+  "createdTime": 1609459200000,
+  "tenantId": { "entityType": "TENANT", "id": "784f394c-42b6-7654-902f-000000000001" },
+  "customerId": { "entityType": "CUSTOMER", "id": "13814000-1dd2-11b2-8080-808080808080" },
+  "email": "tenant@thingsboard.org",
+  "authority": "TENANT_ADMIN",
+  "firstName": "Tenant",
+  "lastName": "Admin"
+}
+```
+
+This endpoint is available to all roles: `SYS_ADMIN`, `TENANT_ADMIN`, and `CUSTOMER_USER`.
+
+## Refresh the Access Token
+
+Access tokens expire after 2.5 hours (configurable). Instead of re-entering credentials, exchange the refresh token for a new token pair:
+
+```
+POST /api/auth/token
+Content-Type: application/json
+```
+
+**Request body:**
+
+```json
+{
+  "refreshToken": "eyJhbGciOiJSUzUxMiJ9..."
+}
+```
+
+**Response** — same shape as the login response:
+
+```json
+{
+  "token": "eyJhbGciOiJSUzUxMiJ9...<new access token>...",
+  "refreshToken": "eyJhbGciOiJSUzUxMiJ9...<new refresh token>..."
+}
+```
+
+<Note>
+  The refresh token itself is rotated on each use — store the new `refreshToken` from the response and discard the old one. The ThingsBoard Java `RestClient` handles this automatically.
+</Note>
+
+## Logout
+
+To record a logout event in the audit log, call the logout endpoint while still authenticated. Because ThingsBoard uses stateless JWTs, this does not invalidate the token server-side — the client is responsible for discarding the token.
+
+```
+POST /api/auth/logout
+Authorization: Bearer {token}
+```
+
+Returns `200 OK` with an empty body.
+
+## Token TTL Configuration
+
+Access and refresh token lifetimes are controlled in `thingsboard.yml` (or via environment variables):
+
+```yaml
+security:
+  jwt:
+    tokenExpirationTime: "${JWT_TOKEN_EXPIRATION_TIME:9000}"      # seconds (default 2.5 h)
+    refreshTokenExpTime: "${JWT_REFRESH_TOKEN_EXPIRATION_TIME:604800}" # seconds (default 1 week)
+    tokenIssuer: "${JWT_TOKEN_ISSUER:thingsboard.io}"
+    tokenSigningKey: "${JWT_TOKEN_SIGNING_KEY:thingsboardDefaultSigningKey}"
+```
+
+Override these values using the corresponding environment variables or by editing `thingsboard.yml` before (re)starting the server. As of ThingsBoard 3.4.2, the JWT signing key is persisted in the database and can also be rotated from the System Administrator UI.
+
+## Default Credentials
+
+Fresh ThingsBoard installations ship with the following built-in accounts. Use them for local development and testing only.
+
+| Role | Username | Password |
+|---|---|---|
+| System Administrator | `sysadmin@thingsboard.org` | `sysadmin` |
+| Tenant Administrator | `tenant@thingsboard.org` | `tenant` |
+| Customer User | `customer@thingsboard.org` | `customer` |
+
+<Warning>
+  **Change all default passwords before deploying to any non-local environment.** Leaving default credentials in place on a production instance exposes your entire platform — and all connected devices — to unauthorized access. Change passwords under **Account → Security** in the ThingsBoard UI or via `POST /api/auth/changePassword`.
+</Warning>
+
+## Role-Based Access
+
+ThingsBoard enforces three built-in roles. Every JWT token carries the role of the user who logged in, and the server validates permissions on every request.
+
+<CardGroup cols={3}>
+  <Card title="System Administrator" icon="shield-halved">
+    Full platform access. Manages tenants, system settings, and OAuth2 configuration. Cannot access tenant-level entities directly.
+  </Card>
+  <Card title="Tenant Administrator" icon="building">
+    Full access within a single tenant. Manages devices, assets, dashboards, rule chains, and customer users.
+  </Card>
+  <Card title="Customer User" icon="user">
+    Access limited to the entities assigned to their customer account. Typically reads telemetry and interacts with dashboards.
+  </Card>
+</CardGroup>
+
+## OAuth2 / SSO
+
+ThingsBoard supports Single Sign-On via OAuth2 and OpenID Connect providers (Google, GitHub, Okta, Azure AD, and any standard OAuth2 provider). SSO is configured by the System Administrator under **Security → OAuth2** in the UI.
+
+When OAuth2 is enabled, the login page surfaces provider buttons alongside the username/password form. Successful OAuth2 authentication issues the same JWT token pair as password-based login, so all API clients work identically after authentication.
+
+<Info>
+  Programmatic API access always uses the `POST /api/auth/login` username/password flow regardless of whether OAuth2 is configured, unless your IdP issues tokens that can be exchanged through a custom integration.
+</Info>
+
+## Change Password
+
+Authenticated users of any role can change their own password:
+
+```
+POST /api/auth/changePassword
+Authorization: Bearer {token}
+Content-Type: application/json
+```
+
+**Request body:**
+
+```json
+{
+  "currentPassword": "tenant",
+  "newPassword": "MyStr0ng!Password"
+}
+```
+
+On success the endpoint returns a fresh `JwtPair` — update your stored tokens. Previously issued tokens remain valid until they expire naturally.

@@ -1,0 +1,326 @@
+---
+title: "Remote Procedure Calls (RPC) in ThingsBoard"
+sidebarTitle: "RPC"
+description: "ThingsBoard supports server-to-device and device-to-server RPC. Send one-way or two-way commands via REST, receive results asynchronously, and handle device-initiated requests."
+---
+
+Remote Procedure Calls (RPC) in ThingsBoard provide bidirectional command channels between the platform and connected devices. Unlike telemetry and attributes — which model data flow — RPC models **action invocations**: the server tells a device to reboot, adjust a setpoint, or toggle a relay, and the device can optionally return a result. RPC can also flow in the opposite direction: a device can ask the server to look up data or trigger a rule chain action.
+
+ThingsBoard implements two distinct RPC directions and multiple delivery mechanisms across MQTT, HTTP, and CoAP transports.
+
+---
+
+## RPC directions
+
+### 1. Server-side RPC (server → device)
+
+The server initiates a command. Use this to:
+- Reboot or reset a device
+- Set a configuration parameter remotely
+- Toggle an actuator (relay, valve, motor)
+- Request an on-demand sensor reading
+
+Two delivery modes are available:
+
+| Mode | Endpoint | Behaviour |
+|------|----------|-----------|
+| **One-way** | `POST /api/rpc/oneway/{deviceId}` | Fire-and-forget. ThingsBoard does not wait for a device response. Returns `200 OK` once the message is queued. |
+| **Two-way** | `POST /api/rpc/twoway/{deviceId}` | ThingsBoard waits up to `timeout` milliseconds for the device to respond, then returns the device's reply. Returns a timeout error if the device does not respond in time. |
+
+### 2. Client-side RPC (device → server)
+
+The device initiates a request to the server. Use this to:
+- Trigger a rule chain from device firmware
+- Request computed values (e.g., a lookup from an external API)
+- Notify the server of a state change that requires server logic
+
+---
+
+## Server-side RPC
+
+### Send one-way RPC command
+
+Sends a command to a device without waiting for a response. Suitable for actuator commands where acknowledgement is handled at the application layer or not needed.
+
+```http
+POST /api/rpc/oneway/{deviceId}
+Authorization: Bearer {jwtToken}
+Content-Type: application/json
+```
+
+<ParamField path="deviceId" type="string" required>
+  UUID of the target device.
+</ParamField>
+
+**Request body**
+
+```json
+{
+  "method": "setGpio",
+  "params": {
+    "pin": 4,
+    "value": 1
+  },
+  "timeout": 5000,
+  "persistent": false,
+  "retries": 0
+}
+```
+
+<ParamField body="method" type="string" required>
+  The RPC method name. The device firmware uses this to dispatch to the correct handler.
+</ParamField>
+
+<ParamField body="params" type="object">
+  Arbitrary JSON parameters passed to the device handler.
+</ParamField>
+
+<ParamField body="timeout" type="integer">
+  Time in milliseconds to keep the RPC request queued if the device is offline (requires `persistent: true`). Default: `10000`.
+</ParamField>
+
+<ParamField body="persistent" type="boolean">
+  If `true`, the RPC request is persisted to the database and will be delivered when the device reconnects. If `false`, the request is only queued in memory. Default: `false`.
+</ParamField>
+
+<ParamField body="retries" type="integer">
+  Number of delivery retries for persistent RPC. Default: `0`.
+</ParamField>
+
+---
+
+### Send two-way RPC command
+
+Sends a command and waits for the device to return a response payload.
+
+```http
+POST /api/rpc/twoway/{deviceId}
+Authorization: Bearer {jwtToken}
+Content-Type: application/json
+```
+
+<ParamField path="deviceId" type="string" required>
+  UUID of the target device.
+</ParamField>
+
+**Request body** (same structure as one-way)
+
+```json
+{
+  "method": "getTemperature",
+  "params": {},
+  "timeout": 10000
+}
+```
+
+**Response** — the raw JSON payload returned by the device:
+
+```json
+{
+  "temperature": 23.5,
+  "unit": "celsius"
+}
+```
+
+If the device does not respond within `timeout` milliseconds, ThingsBoard returns a `408 Request Timeout` error.
+
+---
+
+### Persistent RPC management
+
+For devices that may be offline, use persistent RPC to queue commands and deliver them upon reconnection.
+
+**Get persistent RPC status**
+
+```http
+GET /api/rpc/persistent/{rpcId}
+Authorization: Bearer {jwtToken}
+```
+
+<ParamField path="rpcId" type="string" required>
+  UUID of the persistent RPC request, returned when creating a persistent one-way or two-way RPC.
+</ParamField>
+
+**List persistent RPC requests for a device**
+
+```http
+GET /api/rpc/persistent/device/{deviceId}?pageSize={pageSize}&page={page}
+Authorization: Bearer {jwtToken}
+```
+
+<ParamField path="deviceId" type="string" required>
+  UUID of the device.
+</ParamField>
+
+<ParamField query="rpcStatus" type="string">
+  Filter by status: `QUEUED`, `SENT`, `DELIVERED`, `SUCCESSFUL`, `TIMEOUT`, `EXPIRED`, `FAILED`.
+</ParamField>
+
+**Delete persistent RPC**
+
+```http
+DELETE /api/rpc/persistent/{rpcId}
+Authorization: Bearer {jwtToken}
+```
+
+<Note>
+  Enable persistent RPC (`"persistent": true`) for devices with intermittent connectivity — field sensors, battery-powered nodes, or mobile assets. Persistent requests survive server restarts and are retried until their expiration time is reached. Set `additionalInfo.timeout` appropriately to prevent stale commands from being delivered long after they are relevant.
+</Note>
+
+---
+
+## Device-side: receiving RPC via MQTT
+
+Devices subscribed to the MQTT broker receive RPC requests on a dedicated topic.
+
+**Subscribe** to incoming RPC requests:
+
+```
+v1/devices/me/rpc/request/+
+```
+
+ThingsBoard publishes a message to `v1/devices/me/rpc/request/{requestId}` with the body:
+
+```json
+{
+  "method": "setGpio",
+  "params": { "pin": 4, "value": 1 }
+}
+```
+
+**Reply** with the result (for two-way RPC):
+
+```
+v1/devices/me/rpc/response/{requestId}
+```
+
+Publish a JSON payload:
+
+```json
+{ "result": "ok" }
+```
+
+The `requestId` from the incoming topic must be included verbatim in the response topic.
+
+---
+
+## Device-side: receiving RPC via HTTP long-poll
+
+Devices without persistent MQTT connections can use HTTP long-polling.
+
+**Poll for an RPC request**
+
+```http
+GET /api/v1/{accessToken}/rpc?timeout={milliseconds}
+```
+
+<ParamField path="accessToken" type="string" required>
+  The device's access token.
+</ParamField>
+
+<ParamField query="timeout" type="integer">
+  Maximum wait time in milliseconds. Default: `20000`.
+</ParamField>
+
+**Response when a command is pending**
+
+```json
+{
+  "id": 42,
+  "method": "reboot",
+  "params": {}
+}
+```
+
+**Reply to the command**
+
+```http
+POST /api/v1/{accessToken}/rpc/{requestId}
+Content-Type: application/json
+```
+
+<ParamField path="accessToken" type="string" required>
+  The device's access token.
+</ParamField>
+
+<ParamField path="requestId" type="integer" required>
+  The `id` from the received RPC request.
+</ParamField>
+
+**Response body** (arbitrary JSON):
+
+```json
+{ "status": "rebooting" }
+```
+
+---
+
+## Client-side RPC (device → server)
+
+Devices can send RPC requests to the server for processing by the rule engine.
+
+**Via MQTT:** publish to `v1/devices/me/rpc/request/{id}` and subscribe for the response on `v1/devices/me/rpc/response/{id}`.
+
+**Via HTTP:**
+
+```http
+POST /api/v1/{accessToken}/rpc
+Content-Type: application/json
+```
+
+**Request body**
+
+```json
+{
+  "method": "getCurrentTime",
+  "params": { "timezone": "UTC" }
+}
+```
+
+The rule engine processes the request via a **To Server RPC** node and publishes the response back to the device.
+
+---
+
+## Example: reboot device
+
+<Steps>
+  <Step title="Send reboot command from the server">
+    ```bash
+    curl -X POST "https://thingsboard.example.com/api/rpc/oneway/${DEVICE_ID}" \
+      -H "Authorization: Bearer $TENANT_JWT" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "method": "reboot",
+        "params": {},
+        "timeout": 5000
+      }'
+    ```
+  </Step>
+
+  <Step title="Device receives command over MQTT">
+    The device receives a message on `v1/devices/me/rpc/request/1`:
+    ```json
+    { "method": "reboot", "params": {} }
+    ```
+    The firmware schedules a reboot and (optionally) publishes an acknowledgement to `v1/devices/me/rpc/response/1`:
+    ```json
+    { "status": "rebooting" }
+    ```
+  </Step>
+
+  <Step title="Verify device reconnects">
+    After reboot, the device reconnects and resumes publishing telemetry. Monitor reconnection in **Device Details → Latest Telemetry** in the ThingsBoard UI.
+  </Step>
+</Steps>
+
+---
+
+## Error codes
+
+| HTTP Status | Meaning |
+|-------------|---------|
+| `200 OK` | RPC queued (one-way) or device replied successfully (two-way) |
+| `400 Bad Request` | Missing `method` field or malformed JSON |
+| `401 Unauthorized` | Missing or expired JWT token |
+| `404 Not Found` | Device UUID does not exist |
+| `408 Request Timeout` | Two-way RPC — device did not respond within `timeout` ms |

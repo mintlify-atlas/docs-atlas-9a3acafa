@@ -1,0 +1,245 @@
+---
+title: "ThingsBoard Device HTTP API for Telemetry and Attributes"
+sidebarTitle: "Device Telemetry"
+description: "Devices push telemetry and read/write attributes using the ThingsBoard Device HTTP API. Authenticate with a device access token — no user JWT required."
+---
+
+The ThingsBoard **Device HTTP API** is the transport layer used by firmware and embedded devices to communicate with the platform. Unlike the Management REST API — which uses JWT tokens and is intended for dashboards, scripts, and administrators — the Device API authenticates with a **device access token** embedded in the URL path. No login step is required; the token itself identifies and authorizes the device.
+
+The base URL for all device API calls is:
+
+```
+http(s)://{host}/api/v1/{accessToken}/
+```
+
+Where `{accessToken}` is the device's unique access token, found in **Device Details → Copy Access Token** in the ThingsBoard UI, or retrieved via the Management API.
+
+<Note>
+  All operations available over HTTP are also available over MQTT and CoAP using the same data formats. The MQTT topic structure mirrors the HTTP path: for example, `POST /api/v1/{token}/telemetry` corresponds to publishing to the `v1/devices/me/telemetry` MQTT topic.
+</Note>
+
+---
+
+## Telemetry submission
+
+Use this endpoint to push time-series sensor readings to ThingsBoard. Submitted data is stored in the platform's time-series database and immediately available to dashboards, rule chains, and alarms.
+
+```http
+POST /api/v1/{accessToken}/telemetry
+Content-Type: application/json
+```
+
+<ParamField path="accessToken" type="string" required>
+  The device's access token. Acts as both identifier and authentication credential.
+</ParamField>
+
+ThingsBoard accepts three payload formats:
+
+<CodeGroup>
+  ```json Simple (server timestamp)
+  {
+    "temperature": 23.5,
+    "humidity": 60,
+    "pressure": 1013.25
+  }
+  ```
+
+  ```json Single reading with timestamp
+  {
+    "ts": 1609459200000,
+    "values": {
+      "temperature": 23.5,
+      "humidity": 60
+    }
+  }
+  ```
+
+  ```json Batch with timestamps
+  [
+    {
+      "ts": 1609459200000,
+      "values": { "temperature": 23.5, "humidity": 60 }
+    },
+    {
+      "ts": 1609459260000,
+      "values": { "temperature": 23.8, "humidity": 59 }
+    }
+  ]
+  ```
+</CodeGroup>
+
+When using the simple format, ThingsBoard applies the server's current timestamp. Timestamps are Unix epoch milliseconds (13-digit integers).
+
+**Value types supported:** `string`, `boolean`, `double` (floating-point), `long` (integer), and nested JSON objects.
+
+**Example request**
+
+```bash
+curl -X POST "https://thingsboard.example.com/api/v1/YOUR_ACCESS_TOKEN/telemetry" \
+  -H "Content-Type: application/json" \
+  -d '{"temperature": 23.5, "humidity": 60}'
+```
+
+A `200 OK` with an empty body indicates success.
+
+---
+
+## Client attribute update
+
+Devices can report their own **client-scope attributes** — local state that the device itself owns and updates, such as firmware version, battery level, or sensor calibration data. Client attributes are not writable by the server; only the device can change them.
+
+```http
+POST /api/v1/{accessToken}/attributes
+Content-Type: application/json
+```
+
+<ParamField path="accessToken" type="string" required>
+  The device's access token.
+</ParamField>
+
+**Request body**
+
+```json
+{
+  "firmwareVersion": "1.0.3",
+  "batteryLevel": 85,
+  "signalStrength": -72,
+  "lastBootTime": "2024-04-01T08:00:00Z"
+}
+```
+
+```bash
+curl -X POST "https://thingsboard.example.com/api/v1/YOUR_ACCESS_TOKEN/attributes" \
+  -H "Content-Type: application/json" \
+  -d '{"firmwareVersion": "1.0.3", "batteryLevel": 85}'
+```
+
+---
+
+## Request attribute values
+
+Devices can fetch their current attribute values from the platform. This is useful on boot to retrieve configuration parameters or shared settings pushed from the server side.
+
+```http
+GET /api/v1/{accessToken}/attributes?clientKeys={keys}&sharedKeys={keys}
+```
+
+<ParamField path="accessToken" type="string" required>
+  The device's access token.
+</ParamField>
+
+<ParamField query="clientKeys" type="string">
+  Comma-separated list of **client-scope** attribute keys to retrieve (e.g., `firmwareVersion,batteryLevel`). Leave empty and set `allClientKeys=true` to fetch all.
+</ParamField>
+
+<ParamField query="sharedKeys" type="string">
+  Comma-separated list of **shared-scope** attribute keys to retrieve (e.g., `targetTemperature,reportingInterval`). Leave empty and set `allSharedKeys=true` to fetch all.
+</ParamField>
+
+<ParamField query="allClientKeys" type="boolean">
+  Set to `true` to return all client-scope attributes regardless of `clientKeys`. Default: `false`.
+</ParamField>
+
+<ParamField query="allSharedKeys" type="boolean">
+  Set to `true` to return all shared-scope attributes regardless of `sharedKeys`. Default: `false`.
+</ParamField>
+
+**Example request**
+
+```bash
+curl "https://thingsboard.example.com/api/v1/YOUR_ACCESS_TOKEN/attributes?clientKeys=firmwareVersion&sharedKeys=targetTemperature"
+```
+
+**Example response**
+
+```json
+{
+  "client": {
+    "firmwareVersion": "1.0.3"
+  },
+  "shared": {
+    "targetTemperature": 22.0
+  }
+}
+```
+
+---
+
+## Subscribe to attribute updates (long-poll)
+
+Devices can subscribe to changes in shared attributes — settings pushed from the server that the device should act on immediately (e.g., configuration changes, thresholds). The HTTP transport uses long-polling: the server holds the connection open until an update arrives or the timeout expires.
+
+```http
+GET /api/v1/{accessToken}/attributes/updates?timeout={milliseconds}
+```
+
+<ParamField path="accessToken" type="string" required>
+  The device's access token.
+</ParamField>
+
+<ParamField query="timeout" type="integer">
+  Maximum time in milliseconds to wait for an update before the server returns an empty response. Default: `20000` (20 seconds).
+</ParamField>
+
+**Response when an update occurs**
+
+```json
+{
+  "shared": {
+    "targetTemperature": 25.0,
+    "reportingInterval": 30
+  }
+}
+```
+
+If no update arrives within the timeout, the server returns `200 OK` with an empty body. The device should re-subscribe immediately.
+
+```bash
+# Device polling loop (simplified)
+while true; do
+  RESPONSE=$(curl -s "https://thingsboard.example.com/api/v1/YOUR_ACCESS_TOKEN/attributes/updates?timeout=30000")
+  if [ -n "$RESPONSE" ]; then
+    echo "Attribute update received: $RESPONSE"
+    # Apply the update...
+  fi
+done
+```
+
+---
+
+## Attribute scopes explained
+
+ThingsBoard has three attribute scopes per device:
+
+| Scope | Written by | Read by | Typical use |
+|-------|-----------|---------|-------------|
+| `CLIENT_SCOPE` | Device | Server & Device | Device self-reported state: battery, firmware version |
+| `SHARED_SCOPE` | Server | Device & Server | Remote configuration: thresholds, intervals |
+| `SERVER_SCOPE` | Server | Server only | Internal platform metadata not visible to the device |
+
+---
+
+## Supported value types
+
+Every telemetry key or attribute key maps to a typed value:
+
+| Type | Example |
+|------|---------|
+| `String` | `"value1"` |
+| `Boolean` | `true` |
+| `Double` | `42.0` |
+| `Long` | `73` |
+| `JSON` | `{"nested": {"key": "value"}}` |
+
+ThingsBoard auto-detects the type from the JSON payload. Store numbers without quotes to preserve numeric semantics in time-series charts.
+
+---
+
+## Error responses
+
+| HTTP Status | Meaning |
+|-------------|---------|
+| `200 OK` | Data accepted successfully |
+| `400 Bad Request` | Malformed JSON or invalid payload structure |
+| `401 Unauthorized` | Invalid or missing device access token |
+| `429 Too Many Requests` | Device has exceeded the tenant's rate limit for transport messages |

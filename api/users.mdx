@@ -1,0 +1,328 @@
+---
+title: "REST API Endpoints for User Management in ThingsBoard"
+sidebarTitle: "Users"
+description: "Create and manage ThingsBoard users via REST API. Assign users to tenants or customers, set roles, and manage activation emails and permissions."
+---
+
+ThingsBoard users are the people who interact with the platform through the UI or REST API. Every user belongs to either a **tenant** (as a Tenant Administrator) or a **customer** (as a Customer User). The user management API lets you programmatically create accounts, invite users via activation emails, retrieve JWT tokens for automation, and manage role assignments across your organization hierarchy.
+
+---
+
+## User roles
+
+ThingsBoard defines two user authority levels below System Administrator:
+
+| Authority | Description |
+|-----------|-------------|
+| `TENANT_ADMIN` | Full access to all resources within the tenant: devices, dashboards, rule chains, customers, and users. |
+| `CUSTOMER_USER` | Scoped access limited to the customer they are assigned to — can view dashboards and manage devices assigned to their customer. |
+
+<Note>
+  Use the customer hierarchy to model end-user management. Create a **Customer** entity for each organization or site, then assign `CUSTOMER_USER` accounts to that customer. This isolates data access automatically without any custom rule-engine logic.
+</Note>
+
+---
+
+## User object
+
+<ResponseField name="id" type="object">
+  Unique identifier. Contains `entityType: "USER"` and a UUID `id`.
+</ResponseField>
+
+<ResponseField name="email" type="string" required>
+  The user's login email address. Must be unique across the platform.
+</ResponseField>
+
+<ResponseField name="authority" type="string" required>
+  Role of the user. One of `TENANT_ADMIN` or `CUSTOMER_USER`.
+</ResponseField>
+
+<ResponseField name="tenantId" type="object" required>
+  The tenant this user belongs to.
+</ResponseField>
+
+<ResponseField name="customerId" type="object">
+  The customer this user belongs to. Required when `authority` is `CUSTOMER_USER`.
+</ResponseField>
+
+<ResponseField name="firstName" type="string">
+  User's first name.
+</ResponseField>
+
+<ResponseField name="lastName" type="string">
+  User's last name.
+</ResponseField>
+
+<ResponseField name="phone" type="string">
+  Contact phone number.
+</ResponseField>
+
+<ResponseField name="additionalInfo" type="object">
+  Arbitrary JSON metadata. Can include a `description` or `defaultDashboardId` to set the user's home dashboard.
+
+  <Expandable title="Common additionalInfo fields">
+    ```json
+    {
+      "description": "Field technician for Site B",
+      "defaultDashboardId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+      "defaultDashboardFullscreen": false,
+      "homeDashboardHideToolbar": true,
+      "lang": "en_US"
+    }
+    ```
+  </Expandable>
+</ResponseField>
+
+---
+
+## Endpoints
+
+### Create or update a user
+
+<Note>
+  Omit the `id` field to create a new user. Include an existing `id` to update that user's profile. The `sendActivationMail` query parameter controls whether an invitation email is dispatched immediately after creation.
+</Note>
+
+```http
+POST /api/user?sendActivationMail={true|false}
+Authorization: Bearer {jwtToken}
+Content-Type: application/json
+```
+
+<ParamField query="sendActivationMail" type="boolean">
+  If `true`, ThingsBoard sends an activation email to the new user immediately. Default: `false`.
+</ParamField>
+
+**Request body**
+
+```json
+{
+  "email": "jane.doe@acme.io",
+  "authority": "TENANT_ADMIN",
+  "tenantId": {
+    "entityType": "TENANT",
+    "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+  },
+  "firstName": "Jane",
+  "lastName": "Doe",
+  "phone": "+1-415-555-0199",
+  "additionalInfo": {
+    "description": "Primary tenant admin"
+  }
+}
+```
+
+**Response** — the saved user object including the assigned `id`.
+
+---
+
+### Get user by ID
+
+```http
+GET /api/user/{userId}
+Authorization: Bearer {jwtToken}
+```
+
+<ParamField path="userId" type="string" required>
+  UUID of the user to retrieve.
+</ParamField>
+
+---
+
+### Delete user
+
+<Warning>
+  Deleting a user is permanent. The user loses all access immediately and cannot be restored. Their owned entities (e.g., dashboards) are not automatically reassigned.
+</Warning>
+
+```http
+DELETE /api/user/{userId}
+Authorization: Bearer {jwtToken}
+```
+
+<ParamField path="userId" type="string" required>
+  UUID of the user to delete.
+</ParamField>
+
+---
+
+### List tenant users
+
+Returns a paginated list of all users that belong to a specific tenant.
+
+```http
+GET /api/tenant/{tenantId}/users?pageSize={pageSize}&page={page}
+Authorization: Bearer {jwtToken}
+```
+
+<ParamField path="tenantId" type="string" required>
+  UUID of the tenant whose users you want to list.
+</ParamField>
+
+<ParamField query="pageSize" type="integer" required>
+  Number of results per page.
+</ParamField>
+
+<ParamField query="page" type="integer" required>
+  Zero-based page index.
+</ParamField>
+
+<ParamField query="textSearch" type="string">
+  Optional substring filter on the user's email or name.
+</ParamField>
+
+---
+
+### List customer users
+
+Returns users scoped to a specific customer entity.
+
+```http
+GET /api/customer/{customerId}/users?pageSize={pageSize}&page={page}
+Authorization: Bearer {jwtToken}
+```
+
+<ParamField path="customerId" type="string" required>
+  UUID of the customer whose users you want to list.
+</ParamField>
+
+<ParamField query="pageSize" type="integer" required>
+  Number of results per page.
+</ParamField>
+
+<ParamField query="page" type="integer" required>
+  Zero-based page index.
+</ParamField>
+
+---
+
+### Get user JWT token
+
+Retrieves a valid JWT access token for the specified user. Useful for automation and testing. Only System Administrators and Tenant Administrators with the `USER_MANAGEMENT` permission can call this endpoint.
+
+<Warning>
+  This endpoint returns a **live JWT token** that grants full access as the target user. Treat it like a password — never log or expose it publicly. Check whether token access is enabled on your instance first with `GET /api/user/tokenAccessEnabled`.
+</Warning>
+
+```http
+GET /api/user/{userId}/token
+Authorization: Bearer {jwtToken}
+```
+
+<ParamField path="userId" type="string" required>
+  UUID of the user whose token you want to retrieve.
+</ParamField>
+
+**Response**
+
+```json
+{
+  "token": "eyJhbGciOiJSUzI1NiJ9...",
+  "refreshToken": "eyJhbGciOiJSUzI1NiJ9..."
+}
+```
+
+---
+
+### Send or resend activation email
+
+Sends or resends the activation email for a user who has not yet set their password.
+
+```http
+POST /api/user/sendActivationMail?email={email}
+Authorization: Bearer {jwtToken}
+```
+
+<ParamField query="email" type="string" required>
+  The email address of the user to send the activation link to.
+</ParamField>
+
+---
+
+### Get activation link
+
+Returns the raw activation link for a user without sending an email. Useful for custom onboarding flows or embedding in external systems.
+
+```http
+GET /api/user/{userId}/activationLink
+Authorization: Bearer {jwtToken}
+```
+
+<ParamField path="userId" type="string" required>
+  UUID of the user whose activation link to retrieve.
+</ParamField>
+
+**Response** — plain text URL, e.g.:
+
+```
+https://thingsboard.example.com/api/noauth/activate?activateToken=abc123xyz
+```
+
+---
+
+### Enable or disable user credentials
+
+Temporarily disable a user account without deleting it. A disabled user cannot log in.
+
+```http
+POST /api/user/{userId}/userCredentialsEnabled?userCredentialsEnabled={true|false}
+Authorization: Bearer {jwtToken}
+```
+
+<ParamField path="userId" type="string" required>
+  UUID of the user to enable or disable.
+</ParamField>
+
+<ParamField query="userCredentialsEnabled" type="boolean" required>
+  Set to `false` to disable, `true` to re-enable.
+</ParamField>
+
+---
+
+## Full example: create a customer user
+
+<Steps>
+  <Step title="Create a customer (if needed)">
+    ```bash
+    curl -X POST https://thingsboard.example.com/api/customer \
+      -H "Authorization: Bearer $TENANT_JWT" \
+      -H "Content-Type: application/json" \
+      -d '{"title": "Site B Operations"}'
+    ```
+    Save the returned customer `id`.
+  </Step>
+
+  <Step title="Create the customer user">
+    ```bash
+    curl -X POST "https://thingsboard.example.com/api/user?sendActivationMail=true" \
+      -H "Authorization: Bearer $TENANT_JWT" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "email": "operator@acme.io",
+        "authority": "CUSTOMER_USER",
+        "tenantId": { "entityType": "TENANT", "id": "<tenant-uuid>" },
+        "customerId": { "entityType": "CUSTOMER", "id": "<customer-uuid>" },
+        "firstName": "Bob",
+        "lastName": "Smith"
+      }'
+    ```
+  </Step>
+
+  <Step title="Verify user creation">
+    ```bash
+    curl "https://thingsboard.example.com/api/customer/<customer-uuid>/users?pageSize=10&page=0" \
+      -H "Authorization: Bearer $TENANT_JWT"
+    ```
+  </Step>
+</Steps>
+
+---
+
+## Error codes
+
+| HTTP Status | Meaning |
+|-------------|---------|
+| `400 Bad Request` | Missing `email` or `authority`, or invalid JSON |
+| `401 Unauthorized` | Missing or expired JWT token |
+| `403 Forbidden` | Insufficient role for the operation |
+| `404 Not Found` | User, tenant, or customer UUID does not exist |

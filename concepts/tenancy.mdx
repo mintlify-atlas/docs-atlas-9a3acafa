@@ -1,0 +1,115 @@
+---
+title: "Multi-Tenancy in ThingsBoard: Tenants, Customers, and Roles"
+sidebarTitle: "Tenancy"
+description: "ThingsBoard supports full multi-tenancy with isolated data per tenant, nested customer hierarchies, and role-based access control for users."
+---
+
+ThingsBoard is built for multi-tenant deployments from the ground up. Every entity — device, asset, dashboard, rule chain, user — belongs to exactly one tenant, and tenants are completely isolated from each other at the data layer. A single ThingsBoard cluster can serve thousands of independent organisations without any cross-tenant data leakage, while a system administrator manages the platform as a whole.
+
+## The Authority Hierarchy
+
+ThingsBoard maps authority levels to three roles, defined in `Authority.java`:
+
+```
+SYS_ADMIN  (code 0)
+    └── TENANT_ADMIN  (code 1)
+            └── CUSTOMER_USER  (code 2)
+```
+
+<CardGroup cols={3}>
+  <Card title="SYS_ADMIN" icon="shield-halved">
+    **System Administrator** — exists outside any tenant. Manages tenant records and tenant profiles, monitors cluster health, configures system-wide settings (SMTP, OAuth2, notification templates). Cannot see tenant data (devices, telemetry, dashboards).
+  </Card>
+  <Card title="TENANT_ADMIN" icon="building">
+    **Tenant Administrator** — owns a single tenant. Creates and manages all entities within the tenant: devices, assets, rule chains, dashboards, customers, and users. Configures integrations, OTA packages, and queues.
+  </Card>
+  <Card title="CUSTOMER_USER" icon="user">
+    **Customer User** — scoped to a customer (or sub-customer) within a tenant. Can only see entities explicitly assigned to their customer. Permissions vary by whether the user is read-only or a customer administrator.
+  </Card>
+</CardGroup>
+
+## Role Capabilities at a Glance
+
+| Action | SYS_ADMIN | TENANT_ADMIN | CUSTOMER_USER |
+|---|:---:|:---:|:---:|
+| Create / delete tenants | ✅ | ❌ | ❌ |
+| Manage tenant profiles | ✅ | ❌ | ❌ |
+| Create devices & assets | ❌ | ✅ | ❌ |
+| Assign entities to customers | ❌ | ✅ | ❌ |
+| View assigned devices | ❌ | ✅ | ✅ |
+| Send RPC to devices | ❌ | ✅ | ✅ (if permitted) |
+| Create rule chains | ❌ | ✅ | ❌ |
+| Create dashboards | ❌ | ✅ | ✅ (own dashboards) |
+| Manage users | ❌ | ✅ | ✅ (sub-customer only) |
+| View audit logs | ❌ | ✅ | ❌ |
+
+## Tenant Profiles
+
+Every tenant is associated with a **Tenant Profile** (`TENANT_PROFILE`). Profiles define hard resource limits and transport-layer rate limits. The `DefaultTenantProfileConfiguration` class exposes the following constraint fields:
+
+<Accordion title="Entity count limits">
+  | Field | Description |
+  |---|---|
+  | `maxDevices` | Maximum number of devices the tenant may create (0 = unlimited). |
+  | `maxAssets` | Maximum number of assets. |
+  | `maxCustomers` | Maximum number of customers. |
+  | `maxUsers` | Maximum number of users. |
+  | `maxDashboards` | Maximum number of dashboards. |
+  | `maxRuleChains` | Maximum number of rule chains. |
+  | `maxEdges` | Maximum number of Edge instances. |
+  | `maxIntegrations` | Maximum number of Integrations. |
+</Accordion>
+
+<Accordion title="Storage and OTA limits">
+  | Field | Description |
+  |---|---|
+  | `maxResourcesInBytes` | Total storage for uploaded resources (images, JS libraries). |
+  | `maxOtaPackagesInBytes` | Total storage for OTA firmware/software packages. |
+  | `maxResourceSize` | Maximum size of a single resource file upload. |
+</Accordion>
+
+<Accordion title="Transport rate limits">
+  Rate limits use the token-bucket format `N:T` (N messages per T seconds). Multiple buckets can be combined with a comma, e.g., `1000:1,20000:60` means at most 1000 per second AND 20 000 per minute.
+
+  | Field | Scope |
+  |---|---|
+  | `transportTenantMsgRateLimit` | All messages from all devices in the tenant per second/minute. |
+  | `transportTenantTelemetryMsgRateLimit` | Telemetry messages only, tenant-wide. |
+  | `transportDeviceMsgRateLimit` | All messages from a single device. |
+  | `transportDeviceTelemetryMsgRateLimit` | Telemetry messages from a single device. |
+  | `transportGatewayMsgRateLimit` | Messages from gateway devices. |
+  | `transportGatewayDeviceMsgRateLimit` | Messages forwarded by a gateway on behalf of a connected device. |
+</Accordion>
+
+<Accordion title="Rule engine isolation">
+  Setting `isolatedTbRuleEngine = true` on a `TenantProfile` pushes all rule-engine processing for that tenant into a dedicated queue. This prevents a high-traffic tenant from degrading rule processing for others — essential in SLA-critical deployments.
+</Accordion>
+
+## Customer Hierarchy
+
+Customers are defined by the `Customer` class, which has both a `tenantId` and an optional `parentCustomerId`. This enables a multi-level customer tree:
+
+```
+Tenant
+├── Customer A               (parentCustomerId = null)
+│   ├── Sub-Customer A1      (parentCustomerId = Customer A)
+│   └── Sub-Customer A2
+└── Customer B
+    └── Sub-Customer B1
+```
+
+Devices and assets are **assigned** to a customer by the tenant admin. Once assigned, customer users can see that entity through the API and dashboards. A device can be assigned to only one customer at a time but can be re-assigned by the tenant admin.
+
+## Users and Permissions
+
+Users are created with the `User` entity and carry three fields that determine their effective access:
+
+- **`authority`** — `SYS_ADMIN`, `TENANT_ADMIN`, or `CUSTOMER_USER` (from `Authority.java`).
+- **`tenantId`** — which tenant the user belongs to (empty for `SYS_ADMIN`).
+- **`customerId`** — which customer within the tenant (empty for `TENANT_ADMIN`).
+
+ThingsBoard PE (Professional Edition) extends this model with fine-grained **Roles** (`ROLE` entity type) and **Group Permissions** (`GROUP_PERMISSION`), allowing per-resource-group, per-operation access control for customer users.
+
+<Tip>
+  Use **Tenant Profiles** to enforce SLA tiers across your customer base. Create a "Free Tier" profile capping devices at 50 and applying tight per-device rate limits, and a "Enterprise" profile with higher or unlimited quotas. Assign each tenant to the appropriate profile — no code changes required. When a tenant upgrades, switch their profile and the limits take effect immediately.
+</Tip>

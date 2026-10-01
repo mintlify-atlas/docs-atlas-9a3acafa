@@ -1,0 +1,141 @@
+{
+  "projectType": "saas",
+  "projectName": "ThingsBoard",
+  "projectDescription": "An open-source, all-in-one IoT platform for device management, data collection, processing, and visualization with support for multi-tenancy, rule engine, and multiple transport protocols.",
+  "theme": "maple",
+  "primaryColor": "#3d50f5",
+  "lightColor": "#345484",
+  "darkColor": "#0b4db1",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/entities",
+              "concepts/tenancy",
+              "concepts/rule-engine",
+              "concepts/telemetry"
+            ]
+          },
+          {
+            "group": "Device Connectivity",
+            "pages": [
+              "connectivity/mqtt",
+              "connectivity/http",
+              "connectivity/coap",
+              "connectivity/lwm2m",
+              "connectivity/snmp"
+            ]
+          },
+          {
+            "group": "Dashboards & Visualization",
+            "pages": [
+              "dashboards/overview",
+              "dashboards/widgets",
+              "dashboards/scada"
+            ]
+          },
+          {
+            "group": "Administration",
+            "pages": [
+              "administration/configuration",
+              "administration/security",
+              "administration/notifications",
+              "administration/edge"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "api/overview",
+              "api/authentication"
+            ]
+          },
+          {
+            "group": "Device & Asset APIs",
+            "pages": [
+              "api/devices",
+              "api/assets",
+              "api/entity-relations",
+              "api/telemetry"
+            ]
+          },
+          {
+            "group": "Management APIs",
+            "pages": [
+              "api/tenants",
+              "api/users",
+              "api/dashboards",
+              "api/rule-chains",
+              "api/alarms"
+            ]
+          },
+          {
+            "group": "Device API",
+            "pages": [
+              "api/device-telemetry",
+              "api/rpc",
+              "api/ota-updates"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Multi-protocol device connectivity (MQTT, HTTP, CoAP, LwM2M, SNMP)",
+    "Real-time telemetry collection and storage",
+    "Drag-and-drop dashboard builder with 100+ built-in widgets",
+    "SCADA dashboards for industrial process monitoring",
+    "Visual rule engine for data processing and automation",
+    "Multi-tenancy with role-based access control",
+    "Bidirectional RPC (remote procedure calls) to devices",
+    "Alarm management and notifications (email, SMS, mobile push)",
+    "OTA (over-the-air) firmware and software updates",
+    "Edge computing support via ThingsBoard Edge",
+    "Entity relations and asset hierarchy",
+    "Audit logging and version control",
+    "Microservices deployment with Kafka/RabbitMQ queue support",
+    "REST API and WebSocket API for server-side integrations",
+    "OAuth2 and 2FA authentication support"
+  ],
+  "publicApiSurface": [
+    "POST /api/auth/login",
+    "GET/POST/DELETE /api/device",
+    "GET/POST/DELETE /api/asset",
+    "GET/POST /api/plugins/telemetry/{entityType}/{entityId}/values/timeseries",
+    "GET/POST /api/plugins/telemetry/{entityType}/{entityId}/values/attributes",
+    "GET/POST/DELETE /api/dashboard",
+    "GET/POST/DELETE /api/rule-chain",
+    "GET/POST/DELETE /api/alarm",
+    "GET/POST/DELETE /api/tenant",
+    "GET/POST/DELETE /api/customer",
+    "GET/POST/DELETE /api/user",
+    "POST /api/v1/{deviceToken}/telemetry (Device HTTP API)",
+    "POST /api/v1/{deviceToken}/attributes (Device HTTP API)",
+    "GET /api/v1/{deviceToken}/attributes (Device HTTP API)",
+    "POST /api/rpc/oneway/{deviceId}",
+    "POST /api/rpc/twoway/{deviceId}",
+    "GET/POST /api/ota-package",
+    "WebSocket: ws://host/api/ws/plugins/telemetry",
+    "MQTT: v1/devices/me/telemetry",
+    "MQTT: v1/devices/me/attributes",
+    "MQTT: v1/devices/me/rpc/request/+"
+  ]
+}

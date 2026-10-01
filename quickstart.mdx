@@ -1,47 +1,146 @@
 ---
-title: "Quickstart"
-description: "Begin with a guide on the fastest path to a successful outcome"
+title: "Get Started with ThingsBoard in 5 Minutes"
+sidebarTitle: "Quickstart"
+description: "Connect your first IoT device to ThingsBoard, push telemetry data, and build a live dashboard — all in under 10 minutes."
 ---
 
-Describe how someone begins using your product. What is the first thing they need to do? Are there any prerequisites?
-
-A quickstart should take someone from zero to using your product. They'll get a quick win and a sense of what they can accomplish.
+This guide walks you through creating a device in ThingsBoard, pushing telemetry over HTTP and MQTT, and building a live time-series dashboard — no coding required. By the end you will have a working end-to-end IoT data pipeline running on your local machine.
 
 ## Prerequisites
 
-Before you begin, you must have:
+Before you begin, make sure you have:
 
-- Requirement one (for example, Node.js 18+, a free account, an API key)
-- Requirement two (for example, a compatible device, a compatible browser, a compatible operating system)
+- A running ThingsBoard instance (see the [Installation guide](/installation) if you do not have one yet).
+- `curl` installed on your machine for the HTTP example.
+- Optionally, `mosquitto_pub` (from the [Mosquitto](https://mosquitto.org/download/) package) for the MQTT example.
 
-## Get started
+<Warning>
+  The default system administrator credentials are **`sysadmin@thingsboard.org` / `sysadmin`**. Change this password immediately after your first login on any environment that is accessible from a network. Navigate to **Profile → Change Password** in the top-right menu.
+</Warning>
+
+## Steps
 
 <Steps>
-  <Step title="Install">
-    Describe how to install your product or sign up.
+  <Step title="Log in to the ThingsBoard UI">
+    Open your browser and navigate to the ThingsBoard web interface:
+
+    ```
+    http://localhost:8080
+    ```
+
+    Log in with the default system administrator account:
+
+    | Field    | Value                        |
+    |----------|------------------------------|
+    | Email    | `sysadmin@thingsboard.org`   |
+    | Password | `sysadmin`                   |
+
+    After the first login, the platform will prompt you to complete the setup wizard. Follow the wizard to create your first **System Administrator** account with a secure email and password, then optionally load demo data (creates a demo tenant with sample devices, dashboards, and rule chains).
+
+    <Tip>
+      The demo tenant includes pre-built dashboards for smart energy, fleet tracking, and smart farming use cases — a great way to explore ThingsBoard's capabilities without starting from scratch.
+    </Tip>
+  </Step>
+
+  <Step title="Create a Device and Copy the Access Token">
+    1. In the left sidebar, click **Entities → Devices**.
+    2. Click the **"+"** button in the top-right corner and select **Add new device**.
+    3. Enter a **Name** (e.g., `My First Sensor`) and click **Add**.
+    4. The device detail panel opens. Click the **"Manage credentials"** button (key icon) or go to the **Device credentials** tab.
+    5. The default credential type is **Access Token**. Copy the auto-generated token — you will need it in the next steps.
+
+    <Note>
+      The access token is how ThingsBoard authenticates a device's HTTP and MQTT requests. Keep it secret; anyone who possesses the token can publish data as that device.
+    </Note>
+  </Step>
+
+  <Step title="Push Telemetry via HTTP">
+    Replace `$ACCESS_TOKEN` with the token you copied in the previous step and run:
 
     ```bash
-    npm install your-package
+    curl -X POST 'http://localhost:8080/api/v1/$ACCESS_TOKEN/telemetry' \
+      -H 'Content-Type: application/json' \
+      -d '{"temperature": 23.5, "humidity": 60}'
+    ```
+
+    A successful response is an empty HTTP `200 OK`. ThingsBoard has now stored two telemetry keys — `temperature` and `humidity` — timestamped with the server's current time.
+
+    You can send multiple data points at once by including more keys in the JSON object:
+
+    ```bash
+    curl -X POST 'http://localhost:8080/api/v1/$ACCESS_TOKEN/telemetry' \
+      -H 'Content-Type: application/json' \
+      -d '{
+        "temperature": 24.1,
+        "humidity": 58,
+        "pressure": 1013.25,
+        "battery_level": 87
+      }'
     ```
   </Step>
-  <Step title="Configure">
-    Describe any setup or configuration needed before first use.
+
+  <Step title="Push Telemetry via MQTT">
+    If you prefer MQTT, ThingsBoard listens on port **1883** by default. Use `mosquitto_pub` to publish a message to the telemetry topic:
 
     ```bash
-    your-cli init
+    mosquitto_pub \
+      -h localhost \
+      -p 1883 \
+      -t "v1/devices/me/telemetry" \
+      -u "$ACCESS_TOKEN" \
+      -m '{"temperature": 25.0, "humidity": 55}'
     ```
+
+    The topic `v1/devices/me/telemetry` is the standard ThingsBoard MQTT telemetry endpoint. The device authenticates using its access token as the **MQTT username** (no password required for token-based auth).
+
+    <Info>
+      For TLS-encrypted MQTT, connect to port **8883** (`MQTT_SSL_BIND_PORT`) and provide the server's certificate. Enable MQTT SSL via `MQTT_SSL_ENABLED=true` in your ThingsBoard configuration.
+    </Info>
   </Step>
-  <Step title="Run it">
-    Show the first thing a user does to see it working.
 
-    ```bash
-    your-cli start
-    ```
+  <Step title="View Data in the Latest Telemetry Tab">
+    Go back to the ThingsBoard UI:
+
+    1. Navigate to **Entities → Devices** and click on **My First Sensor**.
+    2. Open the **Latest telemetry** tab.
+
+    You should see your `temperature`, `humidity`, and any other keys you pushed, along with their most recent values and timestamps. The list updates in real time — run the `curl` command again with a different value and watch the table change within seconds.
+  </Step>
+
+  <Step title="Create a Dashboard with a Time-Series Chart">
+    Now visualise the data on a live dashboard:
+
+    1. In the left sidebar, click **Dashboards** and then **"+"** → **Create new dashboard**.
+    2. Enter a **Title** (e.g., `Sensor Dashboard`) and click **Add**.
+    3. The dashboard opens in edit mode. Click **"Add widget"**.
+    4. In the widget library, select the **Charts** bundle and choose **Time series chart**.
+    5. In the widget configuration:
+       - Under **Datasources**, click **"+ Add datasource"**.
+       - Select **Device** as the type, then choose **My First Sensor** from the dropdown.
+       - Add the keys `temperature` and `humidity` as data keys.
+    6. Click **Add** to place the widget on the dashboard, then click the **Save** icon (floppy disk) to save.
+
+    The chart now shows a time-series graph of your sensor data. Every new telemetry message you push will appear on the chart in real time via WebSocket.
+
+    <Tip>
+      Drag the bottom-right corner of the widget to resize it, or click the pencil icon to change the chart type, colours, legend, and time window. ThingsBoard supports bar charts, pie charts, gauges, maps, and 40+ other widget types out of the box.
+    </Tip>
   </Step>
 </Steps>
 
-<Tip>
-  Give people a way to get help. This could be a link to a support page, a chat with a customer support agent, or a forum for your product.
+## What's Next?
 
-  Example: Need help? Reach out to us at [support@yourcompany.com](mailto:support@yourcompany.com).
-</Tip>
+<CardGroup cols={2}>
+  <Card title="Installation" icon="server" href="/installation">
+    Deploy ThingsBoard with Docker Compose, Kubernetes, or a Debian/Ubuntu package for a production-ready setup.
+  </Card>
+  <Card title="Rule Engine" icon="bolt" href="https://thingsboard.io/docs/pe/user-guide/rule-engine/">
+    Learn how to build rule chains that process telemetry, raise alarms, send notifications, and integrate with third-party services.
+  </Card>
+  <Card title="Device Connectivity" icon="wifi" href="https://thingsboard.io/docs/pe/getting-started/">
+    Explore all transport options — MQTT, HTTP, CoAP, LwM2M, and SNMP — including TLS/DTLS secured connections.
+  </Card>
+  <Card title="Dashboards" icon="chart-bar" href="https://thingsboard.io/iot-data-visualization/">
+    Build advanced dashboards with maps, SCADA symbols, gauges, and custom widgets for any IoT use case.
+  </Card>
+</CardGroup>

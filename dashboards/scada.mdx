@@ -1,0 +1,239 @@
+---
+title: "SCADA Dashboards for Industrial IoT in ThingsBoard"
+sidebarTitle: "SCADA"
+description: "ThingsBoard SCADA dashboards let you monitor and control industrial processes in real time using animated symbols, state-based visuals, and interactive controls."
+---
+
+ThingsBoard's SCADA (Supervisory Control and Data Acquisition) capabilities bring industrial process visualization directly into the IoT platform. Instead of a grid of charts and cards, a SCADA screen is an engineering diagram where every pipe, valve, pump, and tank is an interactive SVG symbol whose color, animation, and state change in real time based on telemetry data from your connected devices. Operators can monitor process conditions at a glance and issue control commands by clicking directly on the symbols—without leaving the dashboard.
+
+---
+
+## What Is SCADA in ThingsBoard?
+
+In the classical sense, SCADA systems aggregate sensor readings from field devices, visualize the data on a mimic diagram, and let operators issue setpoint or command signals back to actuators. ThingsBoard implements the same pattern inside its dashboard engine:
+
+- **Data acquisition** is handled by the standard telemetry and attribute subscription system (MQTT, HTTP, CoAP, OPC-UA, Modbus via IoT Gateway).
+- **Supervisory visualization** is provided by the `scada` layout type and SCADA symbol widgets.
+- **Control** is achieved through RPC commands sent directly from symbol click actions.
+
+The `LayoutType.scada` enum value activates a fixed-dimension canvas instead of the fluid responsive grid used by default dashboards. This ensures that process diagrams remain pixel-accurate regardless of window size.
+
+```typescript
+// From dashboard.models.ts
+export enum LayoutType {
+  default = 'default',
+  scada   = 'scada',     // Fixed-dimension process diagram canvas
+  divider = 'divider',
+}
+```
+
+---
+
+## SCADA Symbols
+
+A SCADA symbol is a vector SVG file extended with ThingsBoard-specific metadata embedded in the `xmlns:tb="https://thingsboard.io/svg"` namespace. The metadata, described by `ScadaSymbolMetadata`, controls how the symbol behaves at runtime:
+
+```typescript
+// From scada-symbol.models.ts
+export interface ScadaSymbolMetadata {
+  title: string;
+  description?: string;
+  searchTags?: string[];
+  widgetSizeX: number;
+  widgetSizeY: number;
+  stateRenderFunction?: string;    // JS executed on every data update
+  tags: ScadaSymbolTag[];          // Named SVG element groups
+  behavior: ScadaSymbolBehavior[]; // Value bindings and action bindings
+  properties: FormProperty[];      // Configurable appearance properties
+}
+```
+
+### Symbol Tags
+
+Tags are named groups of SVG elements identified by the custom attribute `tb:tag="<tagName>"`. A tag can have a **state render function** that runs every time subscribed telemetry changes, and **click action handlers**:
+
+```typescript
+export interface ScadaSymbolTag {
+  tag: string;
+  stateRenderFunction?: string;           // (ctx, element) => void
+  stateRender?: ScadaSymbolTagStateRenderFunction;
+  actions?: { [trigger: string]: ScadaSymbolAction }; // e.g. 'click'
+}
+```
+
+For example, a pump symbol might have a tag `motorBody` whose state render function fills the element with green when `running === true` and gray otherwise.
+
+### Symbol Behaviors
+
+Behaviors connect SVG rendering to live data. The `ScadaSymbolBehaviorType` enum defines three kinds:
+
+```typescript
+// From scada-symbol.models.ts
+export enum ScadaSymbolBehaviorType {
+  value        = 'value',        // Read telemetry/attribute → render
+  action       = 'action',       // Click → write value / RPC command
+  widgetAction = 'widgetAction'  // Click → ThingsBoard widget action (navigate, custom, etc.)
+}
+```
+
+| Behavior Type | Direction | Typical Use |
+|---|---|---|
+| `value` | Device → Symbol | Animate fill, rotation, visibility from telemetry |
+| `action` | Symbol → Device | Send RPC or write attribute on click/interaction |
+| `widgetAction` | Symbol → Dashboard | Navigate to a detail state, open a dialog |
+
+### Symbol Properties
+
+Properties (`FormProperty[]`) are user-configurable parameters exposed in the symbol widget's settings panel. They allow the same symbol SVG to adapt its appearance—label text, nominal thresholds, color palette—without editing the source SVG or the behavior scripts.
+
+---
+
+## Creating a SCADA Screen
+
+<Steps>
+  <Step title="Create a new dashboard">
+    Navigate to **Dashboards → +** and create a new dashboard. Enter a title that reflects the process being visualized (e.g. "Water Treatment – Site A").
+  </Step>
+  <Step title="Switch the layout to SCADA">
+    Enter edit mode and open **Manage layouts** (layout icon in the edit toolbar). For the **main** layout pane, change **Layout type** to **SCADA**. Configure the canvas **width** and **height** in pixels to match your process diagram dimensions. The canvas will scroll rather than reflow, preserving exact symbol placement.
+  </Step>
+  <Step title="Define entity aliases">
+    Open **Entity aliases** and create aliases for the devices that feed data into the diagram (pumps, valves, tanks, sensors). Use `singleEntity` aliases for individual equipment or `entityGroup` / `relationsQuery` for dynamic populations.
+  </Step>
+  <Step title="Place symbols from the library">
+    Click **Add widget** on the canvas. Filter by the **SCADA** bundle category (bundles with `scada: true` appear here). Browse symbols by category—Pipes, Pumps, Valves, Tanks, Meters—and click a symbol to place it. SCADA symbol widgets use the `ScadaSymbolWidgetSettings` model:
+
+    ```typescript
+    // From scada-symbol-widget.models.ts
+    export interface ScadaSymbolWidgetSettings {
+      scadaSymbolUrl?: string;
+      scadaSymbolContent?: string;
+      simulated?: boolean;
+      scadaSymbolObjectSettings: ScadaSymbolObjectSettings;
+      background: BackgroundSettings;
+      padding: string;
+    }
+    ```
+  </Step>
+  <Step title="Configure symbol state bindings">
+    In the symbol widget configuration dialog, the **Behavior** section lists all behaviors declared in the symbol's metadata. For each `value` behavior, choose **Get value** method:
+
+    - **Attribute** — reads a shared attribute key
+    - **Time-series** — reads the latest value of a telemetry key
+    - **RPC call** — polls the device for the current value
+
+    Map each behavior to the corresponding key on the entity alias you defined.
+  </Step>
+  <Step title="Configure control actions">
+    For each `action` behavior, choose **Set value** method:
+
+    - **Execute RPC** — calls a named RPC method on the target device with an optional payload
+    - **Set attribute** — writes a shared or server attribute
+
+    Optionally configure `widgetAction` behaviors to open a detail dashboard state when the operator clicks on a symbol.
+  </Step>
+  <Step title="Save and test">
+    Exit edit mode, verify that symbols respond to live telemetry, and test control actions in a safe environment before deploying to production.
+  </Step>
+</Steps>
+
+---
+
+## State-Based Visualization
+
+State-based rendering is the heart of SCADA interactivity. The `stateRenderFunction` on a tag or the top-level `ScadaSymbolMetadata.stateRenderFunction` runs inside the `ScadaSymbolContext` every time subscribed data changes:
+
+```typescript
+// ScadaSymbolContext available inside every render function
+export interface ScadaSymbolContext {
+  api: ScadaSymbolApi;          // Helper methods for animation, text, icons
+  tags: { [id: string]: Element[] }; // SVG elements grouped by tb:tag
+  values: { [id: string]: any }; // Current resolved behavior values
+  properties: { [id: string]: any }; // Resolved symbol properties
+  svg: Svg;                     // Root SVG.js Svg instance
+}
+```
+
+A typical state render function for a two-state valve might look like:
+
+```javascript
+// stateRenderFunction for a valve symbol
+var isOpen = ctx.values.valveOpen;
+var bodyElements = ctx.tags['valveBody'];
+ctx.api.cssAnimate(bodyElements[0], 200)
+  .attr('fill', isOpen ? '#4CAF50' : '#F44336')
+  .complete();
+ctx.api.text(ctx.tags['statusLabel'], isOpen ? 'OPEN' : 'CLOSED');
+```
+
+The `ScadaSymbolApi` provides a purpose-built set of animation and rendering helpers:
+
+| API Method | Description |
+|---|---|
+| `api.cssAnimate(element, duration)` | Returns an animation runner; supports `.attr()`, `.move()`, `.rotate()` |
+| `api.connectorAnimate(element, path, reversedPath)` | Animates flow direction along a pipe path |
+| `api.text(element, text)` | Sets text content on an SVG text element |
+| `api.font(element, font, color)` | Applies font and color settings |
+| `api.icon(element, icon, size, color)` | Renders a Material icon inside an SVG element |
+| `api.formatValue(value, decimals, units)` | Formats a numeric value with units for display |
+| `api.disable(element)` / `api.enable(element)` | Toggles pointer-events for interactive elements |
+| `api.setValue(valueId, value)` | Programmatically sets a behavior value from within a script |
+
+---
+
+## Control Widgets: Sending RPC from Symbols
+
+When an operator clicks an interactive symbol element (e.g. a switch or button), the click action handler fires and calls:
+
+```typescript
+// ScadaSymbolApi.callAction
+api.callAction(event, behaviorId, value?, observer?)
+```
+
+`behaviorId` refers to a declared `action`-type behavior in the symbol metadata. At runtime, ThingsBoard resolves the configured `SetValueSettings` for that behavior and dispatches the appropriate operation—an RPC call, attribute write, or widget action:
+
+```typescript
+// From action-widget-settings.models.ts (SetValueAction)
+export enum SetValueAction {
+  EXECUTE_RPC      = 'EXECUTE_RPC',
+  SET_ATTRIBUTE    = 'SET_ATTRIBUTE',
+  ADD_TIME_SERIES  = 'ADD_TIME_SERIES'
+}
+```
+
+RPC calls are non-blocking; the optional `observer` callback receives the response or error. The `displayRpcMessageToast` flag in `WidgetTypeParameters` controls whether a success/failure toast notification is shown to the operator.
+
+---
+
+## Use Cases
+
+<CardGroup cols={2}>
+  <Card title="Factory Floor Monitoring" icon="industry">
+    Visualize production lines with animated conveyor belts, robotic arms, and status indicators. Track OEE metrics in real time and let line supervisors pause individual stations by clicking their symbols.
+  </Card>
+  <Card title="Water & Wastewater Treatment" icon="droplets">
+    Display pump stations, clarifiers, and chemical dosing units on an animated process flow diagram. Operators can toggle pumps, set dosing rates, and view tank levels without switching to a separate control system HMI.
+  </Card>
+  <Card title="Energy Management" icon="bolt">
+    Model electrical single-line diagrams (SLDs) with bus bars, breakers, transformers, and meters. Color-code segments by load percentage and trip breakers remotely via RPC.
+  </Card>
+  <Card title="Building Automation" icon="building">
+    Render floor plans with HVAC zones, air handling units, and BMS sensor points. Overlay real-time temperature and CO₂ readings and let facility managers adjust setpoints from the diagram.
+  </Card>
+</CardGroup>
+
+---
+
+## Custom SVG Symbols
+
+ThingsBoard's SCADA symbol editor allows you to import any SVG file and add the ThingsBoard namespace metadata interactively:
+
+1. Navigate to **Resources → SCADA Symbols**.
+2. Click **+ Upload symbol** and select an SVG file.
+3. The symbol editor opens with the SVG rendered on the canvas. Use the tag panel to assign `tb:tag` identifiers to element groups by clicking directly on the SVG elements.
+4. Switch to the **Metadata** tab to define behaviors and properties using the visual form.
+5. Save the symbol. It appears in the SCADA widget bundle and can be placed on any SCADA dashboard.
+
+<Info>
+  When importing custom SVG symbols, ThingsBoard detects the `xmlns:tb="https://thingsboard.io/svg"` namespace automatically. SVG files that already contain this namespace and the required metadata structure (validated against the `tbNamespaceRegex` and `tbTagRegex` patterns in `scada-symbol.models.ts`) are imported with their behaviors and properties intact—no manual re-configuration needed. SVG files without the namespace are imported as blank symbols, and you add the metadata in the editor.
+</Info>

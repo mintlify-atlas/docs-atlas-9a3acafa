@@ -1,0 +1,250 @@
+---
+title: "Building IoT Dashboards in ThingsBoard"
+sidebarTitle: "Overview"
+description: "ThingsBoard dashboards display real-time and historical IoT data using drag-and-drop widgets. Share dashboards with customers, embed them externally, or set up public views."
+---
+
+ThingsBoard dashboards are the primary interface through which operators and customers interact with IoT data. Each dashboard is a configurable canvas that combines widgets displaying real-time telemetry, historical charts, control elements, and alarms—all driven by live entity subscriptions. Dashboards support multi-state navigation, responsive breakpoint layouts, and granular sharing controls so you can tailor the experience for every role in your organization.
+
+## Core Concepts
+
+### States
+
+A dashboard is composed of one or more **states**. The initial state is marked `root: true` in the dashboard configuration and is loaded when the dashboard first opens. Additional states allow you to build drill-down flows—for example, clicking a device row in a table widget can open a detail state that shows telemetry charts for that specific device.
+
+```typescript
+// From dashboard.models.ts
+export interface DashboardState {
+  name: string;
+  root: boolean;
+  layouts: DashboardStateLayouts;
+}
+```
+
+Each state carries its own layouts, so widgets can be arranged differently per state without duplicating the entire dashboard.
+
+### Layouts
+
+Within each state, widgets are placed inside one or two layout panes: **main** and **right**. The layout pane type is controlled by `GridSettings.layoutType`, which can be set to one of three values:
+
+| Layout Type | Description |
+|---|---|
+| `default` | Standard responsive grid for general-purpose dashboards |
+| `scada` | Fixed-dimension canvas for SCADA process screens |
+| `divider` | Splits the viewport into a main pane and a right pane side-by-side |
+
+The divider layout supports both percentage-based and fixed-pixel column widths, configurable through `LayoutDimension`.
+
+### Responsive Breakpoints
+
+Every layout pane can define per-breakpoint overrides so widget positions and sizes adapt automatically to screen width. ThingsBoard ships with six system breakpoint IDs:
+
+| Breakpoint | Icon | Typical width |
+|---|---|---|
+| `default` | Desktop | No maximum |
+| `xl` | Large desktop | No maximum |
+| `lg` | Monitor | Wide desktop |
+| `md` | Computer | ~1280 px |
+| `sm` | Tablet | ~960 px |
+| `xs` | Phone | ~600 px |
+
+Each `WidgetLayout` entry carries individual `desktopHide` and `mobileHide` flags so you can show a widget only on certain form factors without deleting it from the layout entirely.
+
+---
+
+## Creating a Dashboard
+
+<Steps>
+  <Step title="Open the Dashboards list">
+    Navigate to **Dashboards** in the left sidebar. Click the **+** button in the top-right corner and choose **Create new dashboard**.
+  </Step>
+  <Step title="Enter basic details">
+    Provide a **title** for the dashboard. Optionally upload a thumbnail **image** that appears in the dashboard list and mobile app home screen.
+  </Step>
+  <Step title="Configure dashboard settings">
+    Click the **Edit** pencil icon to open the dashboard canvas. Then open **Dashboard settings** (gear icon in the toolbar) to configure:
+    - **State controller** — `default` for URL-based states or `entity` for entity-context navigation
+    - **Toolbar visibility** — show or hide the time window selector, export button, and entity filters
+    - **Custom CSS** — inject scoped CSS classes applied to the entire dashboard container
+  </Step>
+  <Step title="Add an entity alias">
+    Before placing widgets, define at least one **entity alias** by clicking the **Entity aliases** button (flag icon). An alias resolves to one or more entities at runtime and is referenced by widget datasources. See [Aliasing Entities](#aliasing-entities) below.
+  </Step>
+  <Step title="Add widgets">
+    Click **Add widget** (the `+` button on the canvas). Browse the widget library by bundle or category, select a widget type, and click **Add**. The widget opens in the configuration dialog.
+  </Step>
+  <Step title="Configure the widget datasource">
+    In the widget configuration dialog, go to the **Data** tab. Select the entity alias you defined and choose the telemetry keys you want to display. Set the aggregation type and time window if applicable.
+  </Step>
+  <Step title="Save the dashboard">
+    Click the **Save** button (checkmark icon) in the top-right corner of the edit toolbar. The dashboard is now persisted and can be shared.
+  </Step>
+</Steps>
+
+---
+
+## Aliasing Entities
+
+Widgets do not bind directly to device or asset IDs. Instead they bind to **entity aliases**, which are named filters that resolve to one or more entities at runtime. This indirection lets you reuse the same widget layout across different devices simply by changing the alias target—without editing individual widget datasources.
+
+The `AliasFilterType` enum defines all supported resolution strategies:
+
+<Tabs>
+  <Tab title="Single Entity">
+    Resolves to exactly one entity specified by its UUID.
+
+    ```typescript
+    // AliasFilterType.singleEntity
+    {
+      type: 'singleEntity',
+      singleEntity: { entityType: 'DEVICE', id: '<device-uuid>' }
+    }
+    ```
+
+    Use this when a dashboard is always about one fixed device or asset.
+  </Tab>
+  <Tab title="Entity List">
+    Resolves to a fixed list of entity UUIDs of the same `entityType`.
+
+    ```typescript
+    // AliasFilterType.entityList
+    {
+      type: 'entityList',
+      entityType: 'DEVICE',
+      entityList: ['<uuid-1>', '<uuid-2>']
+    }
+    ```
+
+    Useful for comparing a known set of meters or sensors side by side.
+  </Tab>
+  <Tab title="Entity Group">
+    Resolves to all members of a named entity group. The group membership is evaluated at query time, so adding or removing entities from the group is reflected immediately in the dashboard.
+
+    ```typescript
+    // AliasFilterType.entityGroup
+    {
+      type: 'entityGroup',
+      groupType: 'DEVICE',
+      entityGroup: '<group-uuid>'
+    }
+    ```
+  </Tab>
+  <Tab title="State Entity">
+    Resolves to the entity that was passed as a navigation parameter when the current dashboard state was opened. This is the core mechanism for drill-down dashboards.
+
+    ```typescript
+    // AliasFilterType.stateEntity
+    {
+      type: 'stateEntity',
+      stateEntityParamName: 'selectedDevice',
+      defaultStateEntity: { entityType: 'DEVICE', id: '<fallback-uuid>' }
+    }
+    ```
+
+    When a widget action calls `openState('deviceDetail', { selectedDevice: entityId })`, this alias automatically resolves to the entity passed in `selectedDevice`.
+  </Tab>
+  <Tab title="Relations Query">
+    Traverses the entity relation graph from a root entity, returning all entities that match the relation filters up to a configurable depth.
+
+    ```typescript
+    // AliasFilterType.relationsQuery
+    {
+      type: 'relationsQuery',
+      rootEntity: { entityType: 'ASSET', id: '<factory-uuid>' },
+      direction: 'FROM',
+      maxLevel: 2,
+      filters: [{ relationType: 'Contains', entityTypes: ['DEVICE'] }]
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## Dashboard States and Navigation
+
+States are defined in `DashboardConfiguration.states` as a map of `{ [stateId]: DashboardState }`. The root state (`root: true`) is always the entry point.
+
+To navigate between states from a widget action, the `IStateController` interface exposes:
+
+```typescript
+// From widget-api.models.ts
+openState(id: string, params?: StateParams, openRightLayout?: boolean): void;
+updateState(id?: string, params?: StateParams, openRightLayout?: boolean): void;
+navigatePrevState(index: number, params?: StateParams): void;
+```
+
+`openState` pushes a new state onto the breadcrumb stack. `navigatePrevState` jumps back by index. `StateParams` is a free-form key-value map where values are `EntityId` objects—the same params are read by `stateEntity` aliases in the target state.
+
+The URL reflects the active state and its params, so deep links work out of the box and the browser back button navigates through the state history.
+
+---
+
+## Sharing Options
+
+<CardGroup cols={2}>
+  <Card title="Assign to Customer" icon="user-group">
+    Open the dashboard list, click the three-dot menu on a dashboard, and choose **Manage assigned customers**. Select one or more customer accounts. Those customers will see the dashboard in their own **Dashboards** list and can view (but not edit) it.
+
+    The REST API endpoint for programmatic assignment is:
+
+    ```
+    POST /api/dashboard/{dashboardId}/customers/add
+    Body: ["<customerId-1>", "<customerId-2>"]
+    ```
+  </Card>
+  <Card title="Make Public" icon="globe">
+    Assigning a dashboard to the built-in **Public** customer generates a shareable URL of the form:
+
+    ```
+    https://<host>/dashboard/<dashboardId>?publicId=<publicCustomerId>
+    ```
+
+    The URL is constructed by `DashboardService.getPublicDashboardLink()`. No login is required to view a public dashboard.
+  </Card>
+  <Card title="Embed via iframe" icon="code">
+    Any dashboard URL—including public ones—can be embedded directly in an external web page using an `<iframe>`:
+
+    ```html
+    <iframe
+      src="https://<host>/dashboard/<dashboardId>?publicId=<publicId>"
+      width="100%"
+      height="600"
+      frameborder="0"
+    ></iframe>
+    ```
+
+    You can suppress the toolbar by appending `&hideToolbar=true` to the URL, or hide it globally in **Dashboard settings** (`hideToolbar: true`).
+  </Card>
+  <Card title="Home Dashboard" icon="house">
+    Tenants and customers can each designate a **home dashboard** that opens automatically on login. Set this via **Dashboard settings → Make home dashboard for tenant** or the REST endpoint:
+
+    ```
+    POST /api/tenant/dashboard/home/info
+    Body: { "dashboardId": { "id": "<uuid>", "entityType": "DASHBOARD" },
+            "hideDashboardToolbar": false }
+    ```
+  </Card>
+</CardGroup>
+
+---
+
+## Dashboard Toolbar
+
+The dashboard toolbar is rendered by `DashboardToolbarComponent` and is visible by default. Its elements are individually toggleable through `DashboardSettings`:
+
+| Setting field | Default | Effect when `false` |
+|---|---|---|
+| `showDashboardTimewindow` | `true` | Hides the global time window selector |
+| `showDashboardExport` | `true` | Hides the CSV / PNG export button |
+| `showFilters` | `true` | Hides the entity filter chips |
+| `showEntitiesSelect` | `true` | Hides the entity selector dropdown |
+| `showDashboardsSelect` | `true` | Hides the dashboard switcher dropdown |
+| `toolbarAlwaysOpen` | `false` | Keeps the toolbar expanded instead of collapsing on scroll |
+| `hideToolbar` | `false` | Removes the entire toolbar (useful for embedded views) |
+
+The global **time window** selector controls the default time range for all time-series widgets on the dashboard. Individual widgets can override the dashboard time window through per-widget time window settings.
+
+<Tip>
+  Use **Dashboard groups** to implement multi-tenant access control at scale. Create an entity group of type **Dashboard**, add dashboards to it, and assign the group to a customer or a user role. All members of the group inherit the same access rights simultaneously—no need to reassign each dashboard individually.
+</Tip>

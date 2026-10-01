@@ -1,0 +1,125 @@
+---
+title: "ThingsBoard Entity Model: Devices, Assets, and Relations"
+sidebarTitle: "Entities"
+description: "ThingsBoard organizes IoT data around typed entities — devices, assets, customers, users, and more. Learn how entities, attributes, telemetry, and relations form the data model."
+---
+
+Every object managed by ThingsBoard — from a physical sensor to a logical building floor — is represented as an **entity**. Entities share a common identity model (a UUID-based `EntityId`), support attributes and telemetry, and can be connected to other entities through typed relations. This unified model means dashboards, rule chains, alarms, and the REST API all work the same way regardless of whether the subject is a device, an asset, or a customer.
+
+## Entity Types
+
+ThingsBoard defines a fixed set of entity types in `EntityType.java`. Each type maps to a distinct lifecycle, permission boundary, and set of capabilities.
+
+| Entity Type | Description |
+|---|---|
+| `TENANT` | Top-level isolated namespace. All other entities belong to a tenant. |
+| `CUSTOMER` | Sub-namespace within a tenant. Can be nested (customers can have sub-customers). |
+| `USER` | A human actor with one of three authority levels: `SYS_ADMIN`, `TENANT_ADMIN`, or `CUSTOMER_USER`. |
+| `DEVICE` | A physical or virtual IoT device that sends telemetry and receives RPC commands. |
+| `ASSET` | A logical grouping entity — building, floor, vehicle fleet, pipeline segment. Does not connect directly via transport protocols. |
+| `ENTITY_VIEW` | A read-only projection of a device or asset, exposing only a selected subset of keys and a time window. |
+| `DASHBOARD` | A visual layout of widgets, bound to one or more entities. |
+| `ALARM` | A stateful event raised against an entity when a condition is violated. |
+| `RULE_CHAIN` | A directed graph of rule nodes that processes messages. |
+| `RULE_NODE` | A single processing step inside a rule chain. |
+| `DEVICE_PROFILE` | A template that controls transport type, alarm rules, provisioning strategy, and default rule chain for a group of devices. |
+| `ASSET_PROFILE` | A template that controls alarm rules and default rule chain for a group of assets. |
+| `TENANT_PROFILE` | Resource limits and rate-limit configuration applied to a tenant. |
+| `EDGE` | A ThingsBoard Edge instance — a gateway that processes data locally and syncs with the cloud. |
+| `OTA_PACKAGE` | A firmware or software package that can be pushed to devices over-the-air. |
+| `WIDGETS_BUNDLE` / `WIDGET_TYPE` | Reusable UI component libraries. |
+| `QUEUE` | A named processing queue used to isolate rule engine workloads per tenant or device profile. |
+
+<Note>
+  The full enum is defined in
+  `common/data/src/main/java/org/thingsboard/server/common/data/EntityType.java`.
+  It also includes platform-internal types such as `API_USAGE_STATE`, `RPC`, `NOTIFICATION`, `OAUTH2_CLIENT`, and `AI_MODEL` that you interact with indirectly through APIs rather than the UI.
+</Note>
+
+## Attributes
+
+Attributes are **current-state** key-value pairs attached to an entity. They are not time-series — only the latest value is stored. ThingsBoard defines three scopes (from `AttributeScope.java`):
+
+<CardGroup cols={3}>
+  <Card title="CLIENT_SCOPE" icon="mobile">
+    Written by the **device** itself. Typical examples: firmware version, hardware revision, supported features. Readable by the server and customers; writable only by the device transport.
+  </Card>
+  <Card title="SHARED_SCOPE" icon="arrows-left-right">
+    Written by the **server** (or rule engine), read by the **device**. Used to push configuration down to a device — e.g., reporting interval, target setpoint. The device is notified when a shared attribute changes.
+  </Card>
+  <Card title="SERVER_SCOPE" icon="server">
+    Written and read only by the **server side** (rule engine, REST API, dashboards). Never exposed to the device. Examples: customer metadata, service tags, computed fields.
+  </Card>
+</CardGroup>
+
+## Telemetry vs. Attributes
+
+Both telemetry and attributes are key-value data, but they differ in storage semantics:
+
+<Tabs>
+  <Tab title="Telemetry">
+    - Timestamped time-series: every write creates a new data point.
+    - Retained for a configurable period (TTL); historical queries return ranges.
+    - Aggregated for dashboards (MIN, MAX, AVG, SUM, COUNT).
+    - Ingested via `POST /api/v1/{deviceToken}/telemetry` or MQTT/CoAP topics.
+    - Stored in PostgreSQL, Cassandra, or TimescaleDB depending on deployment.
+  </Tab>
+  <Tab title="Attributes">
+    - Single latest value per key per scope; no history by default.
+    - Reads return the most recent value and its last-update timestamp.
+    - SHARED_SCOPE attributes trigger a push notification to the device on change.
+    - Managed via `POST /api/plugins/telemetry/{entityType}/{entityId}/attributes/{scope}`.
+  </Tab>
+</Tabs>
+
+## Entity Relations
+
+Relations are **directional, typed links** between any two entities. The `EntityRelation` class stores a `from` entity ID, a `to` entity ID, a string `type`, and a `RelationTypeGroup`.
+
+Built-in relation types defined in `EntityRelation.java`:
+
+| Type string | Meaning |
+|---|---|
+| `Contains` | The `from` entity logically contains the `to` entity (e.g., a building Asset contains a floor Asset). |
+| `Manages` | The `from` entity manages the `to` entity. |
+| `Uses` | The `from` entity uses a resource represented by the `to` entity. |
+| `ManagedByEdge` | The entity is managed by a ThingsBoard Edge node. |
+| `ManagedByIntegration` | The entity was created or is owned by an Integration. |
+
+You can create custom relation types with any string value. Relations are queried recursively with depth and direction filters, enabling graph traversals like "find all devices two levels beneath this building asset."
+
+```json
+{
+  "from": { "entityType": "ASSET", "id": "a1b2c3d4-..." },
+  "to":   { "entityType": "DEVICE", "id": "e5f6a7b8-..." },
+  "type": "Contains",
+  "typeGroup": "COMMON"
+}
+```
+
+## Entity Profiles
+
+Profiles are template entities that apply shared configuration to every device or asset of a given type.
+
+<Accordion title="DeviceProfile">
+  A `DeviceProfile` (type `DEVICE_PROFILE`) controls:
+
+  - **Transport type** — `DEFAULT` (MQTT/HTTP/CoAP/SNMP), `MQTT`, `COAP`, `LWM2M`, or `SNMP`.
+  - **Alarm rules** — declarative threshold conditions that raise alarms without a custom rule chain.
+  - **Provisioning strategy** — `DISABLED`, `ALLOW_CREATE_NEW_DEVICES`, or `CHECK_PRE_PROVISIONED_DEVICES`.
+  - **Default rule chain** — overrides the root rule chain for all devices under this profile.
+  - **Default dashboard** — opened in the mobile app when navigating to a device.
+  - **OTA package references** — firmware and software package IDs for over-the-air updates.
+
+  Defined in `common/data/src/main/java/org/thingsboard/server/common/data/DeviceProfile.java`.
+</Accordion>
+
+<Accordion title="AssetProfile">
+  An `AssetProfile` (type `ASSET_PROFILE`) controls alarm rules and the default rule chain for assets. It mirrors the device profile structure but without transport or OTA configuration.
+</Accordion>
+
+## Entity Views
+
+<Note>
+  An **Entity View** (`ENTITY_VIEW`) is a read-only, scoped projection of a device or asset. It exposes only the telemetry and attribute keys you specify and optionally restricts access to a time window (`startTimeMs` / `endTimeMs`). Assign an Entity View to a customer to share live sensor readings without granting access to the full device, its credentials, or any keys you want to keep private.
+</Note>

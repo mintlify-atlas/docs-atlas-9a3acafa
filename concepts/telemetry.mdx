@@ -1,0 +1,185 @@
+---
+title: "Telemetry and Attributes in ThingsBoard"
+sidebarTitle: "Telemetry"
+description: "ThingsBoard stores two types of time-series data: telemetry (timestamped measurements) and attributes (current state). Learn the data model, storage backends, and aggregation options."
+---
+
+ThingsBoard separates device data into two distinct storage models: **telemetry** (time-series measurements that accumulate over time) and **attributes** (the current state of an entity, stored as the latest value only). Understanding the difference determines how you ingest data, query it in dashboards, and configure retention policies. Both models share the same key-value structure and the same five supported data types.
+
+## Telemetry: Time-Series Data
+
+Telemetry is a sequence of timestamped key-value readings. Each write appends a new data point; historical points are never overwritten (unless TTL expires). This is the right model for temperature, humidity, GPS coordinates, power consumption, and any measurement that changes continuously.
+
+### Ingesting Telemetry
+
+Devices send telemetry over MQTT, HTTP, CoAP, or LWM2M. The simplest payload is a flat JSON object — ThingsBoard assigns the server receipt timestamp automatically:
+
+```json
+{"temperature": 23.5, "humidity": 60, "status": "active"}
+```
+
+To provide an explicit device-side timestamp (in milliseconds since Unix epoch), use the `ts` + `values` envelope:
+
+```json
+{"ts": 1609459200000, "values": {"temperature": 23.5, "humidity": 60}}
+```
+
+You can batch multiple timestamped readings in a single request by sending an array:
+
+```json
+[
+  {"ts": 1609459200000, "values": {"temperature": 23.5}},
+  {"ts": 1609459260000, "values": {"temperature": 23.8}}
+]
+```
+
+The rule engine node that persists telemetry is `TbMsgTimeseriesNode`. Its configuration exposes two key options:
+
+- **`defaultTTL`** — time-to-live in seconds (0 = keep forever).
+- **`useServerTs`** — when `true`, ignores any `ts` field in the payload and always stores the server receipt time.
+
+### HTTP REST Endpoint
+
+```http
+POST /api/v1/{deviceToken}/telemetry
+Content-Type: application/json
+
+{"temperature": 23.5, "humidity": 60}
+```
+
+## Attributes: Current State
+
+Attributes store only the **latest value** for a key. There is no history — each write replaces the previous value for that key within the same scope. Use attributes for device configuration, firmware version, operational flags, and any value where only the current reading matters.
+
+ThingsBoard defines three attribute scopes (from `AttributeScope.java`):
+
+<CardGroup cols={3}>
+  <Card title="CLIENT_SCOPE" icon="mobile">
+    **Written by the device.** Examples: `firmwareVersion`, `hardwareRevision`, `supportedFeatures`. Readable by the server and customer dashboards. The device writes these on connect or when its state changes.
+  </Card>
+  <Card title="SHARED_SCOPE" icon="arrows-left-right">
+    **Written by the server, read by the device.** Examples: `reportingIntervalMs`, `targetTemperature`, `ledEnabled`. When a shared attribute changes, the platform sends a push notification to the device over its active transport connection.
+  </Card>
+  <Card title="SERVER_SCOPE" icon="server">
+    **Server-side only.** Never sent to the device. Examples: customer metadata, SLA tier tags, computed enrichment fields. Written via the REST API, rule engine, or integrations.
+  </Card>
+</CardGroup>
+
+### Attribute REST Endpoint
+
+```http
+POST /api/plugins/telemetry/DEVICE/{deviceId}/attributes/SHARED_SCOPE
+Content-Type: application/json
+
+{"reportingIntervalMs": 5000, "ledEnabled": true}
+```
+
+## Supported Value Types
+
+Both telemetry and attributes accept five data types, defined in `DataType.java`:
+
+| Type | Java class | Example JSON value |
+|---|---|---|
+| `BOOLEAN` | `BooleanDataEntry` | `true` |
+| `LONG` | `LongDataEntry` | `42` |
+| `DOUBLE` | `DoubleDataEntry` | `23.5` |
+| `STRING` | `StringDataEntry` | `"active"` |
+| `JSON` | `JsonDataEntry` | `{"lat": 51.5, "lon": -0.1}` |
+
+ThingsBoard infers the type automatically from the JSON value. To store a number as a string, quote it in the payload.
+
+## Data Retention and TTL
+
+<Tabs>
+  <Tab title="Default (keep forever)">
+    When `defaultTTL = 0` (the default in `TbMsgTimeseriesNodeConfiguration`), data points are kept indefinitely, subject only to storage capacity. This is the recommended setting for deployments with Cassandra or TimescaleDB, where retention is managed at the storage layer.
+  </Tab>
+  <Tab title="Per-node TTL">
+    Set a non-zero `defaultTTL` (in seconds) on the **Save Timeseries** rule node to automatically expire data points after the specified duration. Individual messages can override this value by including a `TTL` key in the message metadata — the node checks metadata first.
+  </Tab>
+  <Tab title="Storage-layer retention">
+    - **PostgreSQL** — use `pg_partman` or native table partitioning with scheduled partition drops.
+    - **Cassandra** — set the `COMPACTION` strategy and `gc_grace_seconds` per table; ThingsBoard passes the TTL as a Cassandra column TTL.
+    - **TimescaleDB** — configure `add_retention_policy()` on the `ts_kv` hypertable for automatic chunk removal.
+  </Tab>
+</Tabs>
+
+## Aggregation
+
+When querying telemetry over a time range in a dashboard widget or via the REST API, ThingsBoard can aggregate multiple data points into a single result per interval. Aggregation types are defined in `Aggregation.java`:
+
+| Type | Description |
+|---|---|
+| `MIN` | Minimum value in the interval. |
+| `MAX` | Maximum value in the interval. |
+| `AVG` | Arithmetic mean of values in the interval. |
+| `SUM` | Sum of all values in the interval. |
+| `COUNT` | Number of data points in the interval. |
+| `NONE` | No aggregation — return raw data points. |
+
+Dashboard widgets select the aggregation function and interval automatically based on the time window and pixel resolution, but you can override both in widget settings.
+
+### REST API Aggregation Query
+
+```http
+GET /api/plugins/telemetry/DEVICE/{deviceId}/values/timeseries
+    ?keys=temperature
+    &startTs=1609459200000
+    &endTs=1609545600000
+    &interval=3600000
+    &agg=AVG
+    &limit=100
+```
+
+## Real-Time WebSocket Subscriptions
+
+ThingsBoard exposes a WebSocket API for live telemetry and attribute updates. Connect to the subscription endpoint and send a subscription command:
+
+```json
+{
+  "tsSubCmds": [
+    {
+      "entityType": "DEVICE",
+      "entityId": "a1b2c3d4-0000-0000-0000-000000000001",
+      "scope": null,
+      "cmdId": 1,
+      "keys": "temperature,humidity",
+      "startTs": 0,
+      "timeWindow": 60000
+    }
+  ]
+}
+```
+
+The server pushes updates as they arrive:
+
+```json
+{
+  "subscriptionId": 1,
+  "errorCode": 0,
+  "data": {
+    "temperature": [[1609459260000, "23.8"]],
+    "humidity":    [[1609459260000, "61"]]
+  }
+}
+```
+
+Dashboard widgets use this WebSocket channel internally to update in real-time without polling.
+
+## Storage Backends
+
+<CardGroup cols={3}>
+  <Card title="PostgreSQL" icon="database">
+    **Default backend.** Suitable for moderate data volumes (up to ~10 million data points per day per cluster node). Time-series data is stored in the `ts_kv` table. No additional infrastructure required.
+  </Card>
+  <Card title="Cassandra" icon="server">
+    **High-throughput backend.** Recommended when ingesting tens of millions of data points per day. Scales horizontally by adding Cassandra nodes. Configured via `thingsboard.yml` by setting the `timeseries.type` to `cassandra`.
+  </Card>
+  <Card title="TimescaleDB" icon="clock">
+    **PostgreSQL extension** optimised for time-series workloads. Uses hypertable partitioning for fast range queries and automatic compression of older chunks. A good middle ground between PostgreSQL simplicity and Cassandra throughput.
+  </Card>
+</CardGroup>
+
+<Info>
+  The storage backend is selected at deployment time in `thingsboard.yml` (`database.ts.type`). You cannot mix backends within a single deployment — all telemetry goes to the configured store. Attributes always use PostgreSQL (the `attribute_kv` table) regardless of the telemetry backend.
+</Info>

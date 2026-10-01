@@ -1,0 +1,238 @@
+---
+title: "ThingsBoard Rule Engine: Processing IoT Events and Data"
+sidebarTitle: "Rule Engine"
+description: "The ThingsBoard rule engine processes incoming messages through visual rule chains. Filter, transform, enrich, and route telemetry and lifecycle events without writing server code."
+---
+
+The ThingsBoard rule engine is a reactive, event-driven processing pipeline that sits between your devices and every downstream action — alarm creation, data enrichment, external system integration, and custom business logic. Every message flowing through the platform (telemetry upload, attribute update, device connect, RPC call, alarm lifecycle event) is routed through a **rule chain** made up of interconnected **rule nodes**. You configure chains visually in the UI; no server deployments are required to change processing logic.
+
+## Core Concepts
+
+<CardGroup cols={2}>
+  <Card title="Rule Chain" icon="diagram-project">
+    A directed graph of rule nodes defined by the `RuleChain` entity. Every tenant has exactly one **root** rule chain (`root = true`) that receives all messages not redirected by a device or asset profile. Additional chains can be created for focused workflows and called from the root chain.
+  </Card>
+  <Card title="Rule Node" icon="circle-nodes">
+    A single processing step inside a chain. Nodes are connected by **relation types** — labelled edges that determine where a message goes after the node finishes. A node outputs a message on exactly one relation per execution.
+  </Card>
+  <Card title="Message (TbMsg)" icon="envelope">
+    The immutable unit of work flowing through a chain. Created from a device event or platform lifecycle event and passed from node to node, potentially transformed along the way.
+  </Card>
+  <Card title="Relation Types" icon="arrow-right-arrow-left">
+    Named output edges on a node. Standard values include **Success**, **Failure**, **True**, **False**, and **Other**. Nodes may define custom relation names (e.g., `Alarm Created`, `Alarm Updated`).
+  </Card>
+</CardGroup>
+
+## Message Structure
+
+Every message (`TbMsg`) carries the following fields, as defined in `TbMsg.java`:
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | UUID | Unique message identifier. |
+| `ts` | long | Message timestamp (milliseconds since epoch). |
+| `type` | String | Message type string, e.g., `Post telemetry`, `Alarm Created` (see `TbMsgType`). |
+| `originator` | `EntityId` | The entity that produced the message (device, asset, etc.). |
+| `customerId` | `CustomerId` | Customer the originator belongs to, if assigned. |
+| `metaData` | Map&lt;String, String&gt; | Key-value metadata enriched by nodes along the chain. |
+| `data` | String | JSON payload — the actual message body. |
+
+### Common Message Types
+
+From `TbMsgType.java`, the platform emits messages for every significant lifecycle event:
+
+<Tabs>
+  <Tab title="Device / Transport">
+    | Type | Description |
+    |---|---|
+    | `POST_TELEMETRY_REQUEST` | Device posted telemetry data. |
+    | `POST_ATTRIBUTES_REQUEST` | Device posted client-scope attributes. |
+    | `ATTRIBUTES_UPDATED` | Server or shared attributes were changed. |
+    | `CONNECT_EVENT` | Device connected to the transport layer. |
+    | `DISCONNECT_EVENT` | Device disconnected. |
+    | `ACTIVITY_EVENT` | Device became active after a period of inactivity. |
+    | `INACTIVITY_EVENT` | Device has not sent data for the configured inactivity timeout. |
+    | `RPC_CALL_FROM_SERVER_TO_DEVICE` | Server-side RPC request queued for the device. |
+  </Tab>
+  <Tab title="Entity Lifecycle">
+    | Type | Description |
+    |---|---|
+    | `ENTITY_CREATED` | A new entity was created. |
+    | `ENTITY_UPDATED` | An existing entity was modified. |
+    | `ENTITY_DELETED` | An entity was deleted. |
+    | `ENTITY_ASSIGNED` | An entity was assigned to a customer. |
+    | `ENTITY_UNASSIGNED` | An entity was un-assigned from a customer. |
+    | `RELATION_ADD_OR_UPDATE` | A relation between entities was added or updated. |
+    | `RELATION_DELETED` | A relation was deleted. |
+  </Tab>
+  <Tab title="Alarms">
+    | Type | Description |
+    |---|---|
+    | `ALARM_CREATED` | A new alarm was raised. |
+    | `ALARM_UPDATED` | Alarm details changed (e.g., details field). |
+    | `ALARM_SEVERITY_UPDATED` | Alarm severity was escalated or de-escalated. |
+    | `ALARM_ACK` | Alarm was acknowledged. |
+    | `ALARM_CLEAR` | Alarm was cleared. |
+  </Tab>
+</Tabs>
+
+## Built-in Node Categories
+
+### Filter Nodes
+
+Filter nodes evaluate a condition and route the message to `True` or `False` (or `Success` / `Failure`).
+
+| Node class | Purpose |
+|---|---|
+| `TbJsFilterNode` | Evaluates a JavaScript / TBEL expression against the message. Returns `True` or `False`. |
+| `TbMsgTypeFilterNode` | Passes only messages whose `type` matches a configured list. |
+| `TbOriginatorTypeFilterNode` | Passes only messages from a specific entity type (e.g., only `DEVICE`). |
+| `TbOriginatorTypeSwitchNode` | Routes to a relation named after the originator's entity type. |
+| `TbMsgTypeSwitchNode` | Routes to a relation named after the message type. |
+| `TbCheckAlarmStatusNode` | Routes based on whether the current alarm is `ACTIVE`, `CLEARED`, or `ACK`. |
+| `TbCheckRelationNode` | Checks whether the originator has a relation of a given type to a specific entity. |
+| `TbCheckMessageNode` | Validates that specified keys exist (and optionally match a value) in the message. |
+
+### Enrichment Nodes
+
+Enrichment nodes read data from the platform and add it to the message metadata or payload before the message moves on.
+
+| Node class | Purpose |
+|---|---|
+| `TbGetAttributesNode` | Copies attributes (any scope) of the originator into message metadata. |
+| `TbGetRelatedAttributeNode` | Reads attributes from an entity related to the originator. |
+| `TbGetDeviceAttrNode` | Reads client, shared, and server attributes of the originator device. |
+| `TbGetCustomerAttributeNode` | Reads attributes of the customer that owns the originator. |
+| `TbGetTenantAttributeNode` | Reads server-scope attributes of the tenant. |
+| `TbGetOriginatorFieldsNode` | Copies entity fields (name, type, label) into metadata. |
+| `TbGetCustomerDetailsNode` / `TbGetTenantDetailsNode` | Copies customer or tenant profile fields into metadata. |
+| `TbDeviceProfileNode` | Evaluates device-profile alarm rules and raises or clears alarms automatically. |
+| `TbGetTelemetryNode` | Reads the latest or historical telemetry values into the message. |
+| `CalculateDeltaNode` | Computes the delta between successive readings of a telemetry key. |
+
+### Transformation Nodes
+
+Transformation nodes modify the message itself — its payload, originator, or metadata.
+
+| Node class | Purpose |
+|---|---|
+| `TbTransformMsgNode` | Rewrites the message payload using a JS/TBEL script. |
+| `TbChangeOriginatorNode` | Replaces the originator with a related entity (e.g., switch from device to its parent asset). |
+| `TbMsgToEmailNode` | Constructs an email object (subject, body, recipients) from the message using templates. |
+| `TbRenameKeysNode` | Renames keys in the message payload. |
+| `TbDeleteKeysNode` | Removes specified keys from the payload. |
+| `TbCopyKeysNode` | Copies keys from payload to metadata or vice-versa. |
+| `TbSplitArrayMsgNode` | Splits a JSON array payload into individual messages, one per element. |
+| `TbJsonPathNode` | Extracts values from the payload using JSONPath expressions. |
+| `TbDuplicateMsgToRelatedNode` | Fans out the message to all related entities of a given type. |
+
+### Action Nodes
+
+Action nodes produce side-effects: persisting data, raising alarms, sending RPC commands.
+
+| Node class | Purpose |
+|---|---|
+| `TbMsgTimeseriesNode` | Saves the message payload as time-series telemetry. Supports configurable TTL and server-side timestamp override. |
+| `TbMsgAttributesNode` | Saves key-value pairs as entity attributes (any scope). |
+| `TbMsgDeleteAttributesNode` | Deletes attribute keys from an entity. |
+| `TbCreateAlarmNode` | Creates or updates an alarm on the originator entity. Routes to `Alarm Created` or `Alarm Updated`. |
+| `TbClearAlarmNode` | Clears an active alarm on the originator. Routes to `Alarm Cleared` or `False`. |
+| `TbLogNode` | Writes a JS/TBEL-formatted string to the rule engine log. Useful for debugging. |
+| `TbSendRPCRequestNode` | Sends a server-side RPC request to the originator device. |
+| `TbSendRPCReplyNode` | Sends an RPC reply back to the device that originated a `TO_SERVER_RPC_REQUEST`. |
+| `TbCreateRelationNode` | Creates a relation between the originator and a configured target entity. |
+| `TbDeleteRelationNode` | Deletes a relation between entities. |
+| `TbMsgCountNode` | Counts messages over a time window and emits a summary message. |
+
+### External Nodes
+
+External nodes integrate ThingsBoard with third-party systems.
+
+<Tabs>
+  <Tab title="Messaging / Streaming">
+    | Node class | Destination |
+    |---|---|
+    | `TbMqttNode` | Publishes the message to an external MQTT broker (including Azure IoT Hub via the `azure` sub-package). |
+    | `TbKafkaNode` | Publishes the message to an Apache Kafka topic. |
+    | `TbRabbitMqNode` | Publishes the message to a RabbitMQ exchange. |
+    | AWS SNS (`sqs` / `sns` packages) | Publishes to AWS Simple Notification Service or Simple Queue Service. |
+    | GCP Pub/Sub (`gcp` package) | Publishes to a Google Cloud Pub/Sub topic. |
+  </Tab>
+  <Tab title="HTTP / REST">
+    The `rest` package contains a REST API call node that sends an HTTP request (GET, POST, PUT, DELETE) to an external endpoint. The URL, headers, and body can be constructed dynamically from message metadata and payload.
+  </Tab>
+  <Tab title="Email / SMS / Notifications">
+    | Node class | Action |
+    |---|---|
+    | `TbSendEmailNode` | Sends an email using the tenant SMTP configuration. Expects a message produced by `TbMsgToEmailNode`. |
+    | `TbSendSmsNode` | Sends an SMS via configured SMS provider (Twilio, AWS SNS SMS, etc.). |
+    | `TbNotificationNode` | Creates an in-platform notification delivered to users or user groups. |
+    | `TbSlackNode` | Posts a message to a Slack channel via webhook. |
+  </Tab>
+</Tabs>
+
+## Rule Chain Lifecycle
+
+<Steps>
+  <Step title="Root chain receives all messages">
+    Every message that does not have a profile-level override is delivered to the **root rule chain** (the chain where `root = true`). There is exactly one root chain per tenant.
+  </Step>
+  <Step title="First node begins processing">
+    The root chain has a designated `firstRuleNodeId`. The message enters through that node.
+  </Step>
+  <Step title="Nodes route via relation types">
+    Each node finishes and emits the message on one output relation (e.g., `True`, `Success`, `Alarm Created`). Connections to downstream nodes are configured in the chain editor.
+  </Step>
+  <Step title="Sub-chains extend the flow">
+    A **Rule Chain** node (available in all categories) forwards the message to another rule chain. This lets you decompose complex logic into reusable, independently testable chains.
+  </Step>
+  <Step title="Profile overrides apply per device type">
+    If a `DeviceProfile` specifies a `defaultRuleChainId`, all messages from devices of that profile bypass the root chain and enter the profile's chain instead.
+  </Step>
+</Steps>
+
+## Example: Temperature Threshold → Alarm → Email
+
+The following flow shows a complete pattern for reacting to high temperature readings:
+
+```
+[POST_TELEMETRY_REQUEST]
+        │
+        ▼
+┌─────────────────────┐
+│  JS Filter Node      │  temperature > 80 ?
+│  (TbJsFilterNode)    │
+└──────┬──────┬───────┘
+     True   False
+       │       │
+       ▼       ▼ (discard)
+┌──────────────────────┐
+│  Create Alarm Node    │  severity=CRITICAL, type="HighTemperature"
+│  (TbCreateAlarmNode)  │
+└──────┬───────────────┘
+  Alarm Created / Updated
+       │
+       ▼
+┌─────────────────────────────┐
+│  Originator Fields Node      │  add device name to metadata
+│  (TbGetOriginatorFieldsNode) │
+└──────┬──────────────────────┘
+    Success
+       │
+       ▼
+┌────────────────────────┐
+│  To Email Node          │  build subject/body from metadata
+│  (TbMsgToEmailNode)     │
+└──────┬─────────────────┘
+    Success
+       │
+       ▼
+┌────────────────────────┐
+│  Send Email Node        │  deliver via tenant SMTP
+│  (TbSendEmailNode)      │
+└────────────────────────┘
+```
+
+<Note>
+  Filter and transformation nodes support both **JavaScript** and **TBEL** (ThingsBoard Expression Language), a sandboxed expression language that is faster and safer than unrestricted JS. TBEL is the recommended choice for production deployments. Switch between the two in each node's configuration. Scripts receive the `msg` (payload object), `metadata` (key-value map), and `msgType` (string) variables.
+</Note>

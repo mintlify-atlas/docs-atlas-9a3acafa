@@ -1,0 +1,180 @@
+---
+title: "Connect Devices to ThingsBoard via CoAP"
+sidebarTitle: "CoAP"
+description: "ThingsBoard supports CoAP for constrained IoT devices over UDP. Use DTLS for secure communication. Default port 5683, DTLS on 5684."
+---
+
+CoAP (Constrained Application Protocol, RFC 7252) is a lightweight request/response protocol designed for machine-to-machine communication on severely constrained nodes. ThingsBoard's CoAP transport mirrors the HTTP device API but operates over UDP, making it suitable for microcontrollers, low-power sensors, and NB-IoT or LTE-M devices where TCP overhead is prohibitive. DTLS (Datagram TLS) provides transport-layer security. CoAP Observe is supported for server-push semantics without polling.
+
+## Connection Details
+
+<CardGroup cols={2}>
+  <Card title="Plain CoAP" icon="signal">
+    **Host:** `{your-thingsboard-host}`  
+    **Port:** `5683` (UDP)  
+    **Scheme:** `coap://`
+  </Card>
+  <Card title="CoAP + DTLS" icon="lock">
+    **Host:** `{your-thingsboard-host}`  
+    **Port:** `5684` (UDP + DTLS)  
+    **Scheme:** `coaps://`
+  </Card>
+</CardGroup>
+
+## Endpoint Structure
+
+All device endpoints follow the pattern:
+
+```
+coap://{host}/api/v1/{deviceToken}/{feature}
+```
+
+Replace `{deviceToken}` with your device access token and `{feature}` with the operation name.
+
+## Endpoint Reference
+
+| Method | URI | Description |
+|--------|-----|-------------|
+| `POST` | `coap://{host}/api/v1/{token}/telemetry` | Publish time-series telemetry |
+| `POST` | `coap://{host}/api/v1/{token}/attributes` | Update client-side attributes |
+| `GET` | `coap://{host}/api/v1/{token}/attributes` | Read server/shared/client attributes |
+| `GET` + Observe | `coap://{host}/api/v1/{token}/attributes` | Subscribe to attribute updates |
+| `GET` + Observe | `coap://{host}/api/v1/{token}/rpc` | Subscribe to RPC commands (server push) |
+| `POST` | `coap://{host}/api/v1/{token}/rpc` | Send a client-initiated RPC request |
+| `POST` | `coap://{host}/api/v1/{token}/claim` | Claim device ownership |
+
+## Sending Telemetry
+
+<Tabs>
+  <Tab title="coap-client CLI">
+    ```bash
+    coap-client -m POST \
+      coap://thingsboard.example.com/api/v1/YOUR_DEVICE_ACCESS_TOKEN/telemetry \
+      -t application/json \
+      -e '{"temperature": 23.5, "humidity": 65}'
+    ```
+  </Tab>
+  <Tab title="With timestamp">
+    ```bash
+    coap-client -m POST \
+      coap://thingsboard.example.com/api/v1/YOUR_DEVICE_ACCESS_TOKEN/telemetry \
+      -t application/json \
+      -e '{"ts": 1634712287000, "values": {"temperature": 26, "humidity": 87}}'
+    ```
+  </Tab>
+  <Tab title="Batch (array)">
+    ```bash
+    coap-client -m POST \
+      coap://thingsboard.example.com/api/v1/YOUR_DEVICE_ACCESS_TOKEN/telemetry \
+      -t application/json \
+      -e '[{"ts":1634712287000,"values":{"temperature":26}},{"ts":1634712588000,"values":{"temperature":25}}]'
+    ```
+  </Tab>
+</Tabs>
+
+## Managing Attributes
+
+### Update Client Attributes
+
+```bash
+coap-client -m POST \
+  coap://thingsboard.example.com/api/v1/YOUR_DEVICE_ACCESS_TOKEN/attributes \
+  -t application/json \
+  -e '{"firmwareVersion": "2.1.0", "serialNumber": "SN-00042"}'
+```
+
+### Read Attributes
+
+```bash
+# Request specific client and shared attribute keys
+coap-client -m GET \
+  "coap://thingsboard.example.com/api/v1/YOUR_DEVICE_ACCESS_TOKEN/attributes?clientKeys=firmwareVersion&sharedKeys=targetFirmware"
+```
+
+## Receiving RPC Commands via CoAP Observe
+
+CoAP Observe (RFC 7641) allows the server to push notifications to the client without polling. Register an observation on the RPC resource and ThingsBoard will deliver each incoming RPC command as a notification.
+
+<Steps>
+  <Step title="Register observation">
+    ```bash
+    coap-client -m GET -s 60 \
+      coap://thingsboard.example.com/api/v1/YOUR_DEVICE_ACCESS_TOKEN/rpc
+    ```
+    The `-s 60` flag keeps the observation alive for 60 seconds.
+  </Step>
+  <Step title="Handle incoming command">
+    Each pushed notification contains an RPC request payload:
+
+    ```json
+    {
+      "id": 7,
+      "method": "reboot",
+      "params": {}
+    }
+  </Step>
+  <Step title="Reply with RPC response">
+    ```bash
+    coap-client -m POST \
+      coap://thingsboard.example.com/api/v1/YOUR_DEVICE_ACCESS_TOKEN/rpc \
+      -t application/json \
+      -e '{"id": 7, "result": "rebooting"}'
+    ```
+  </Step>
+</Steps>
+
+## DTLS Security Modes
+
+When connecting on port 5684 (`coaps://`), two security modes are supported:
+
+<CardGroup cols={2}>
+  <Card title="Pre-Shared Key (PSK)" icon="key">
+    The device presents an identity string and a shared secret key provisioned in the ThingsBoard device credentials. Suitable for devices with limited PKI support.
+  </Card>
+  <Card title="X.509 Certificate" icon="certificate">
+    The device presents a client certificate signed by a trusted CA configured on ThingsBoard. Provides stronger identity guarantees and is recommended for production deployments.
+  </Card>
+</CardGroup>
+
+### Connecting with DTLS PSK
+
+```bash
+coap-client -m POST \
+  coaps://thingsboard.example.com/api/v1/YOUR_DEVICE_ACCESS_TOKEN/telemetry \
+  -u "YOUR_PSK_IDENTITY" \
+  -k "YOUR_PSK_KEY" \
+  -t application/json \
+  -e '{"temperature": 22.0}'
+```
+
+### Connecting with DTLS X.509
+
+```bash
+coap-client -m POST \
+  coaps://thingsboard.example.com/api/v1/YOUR_DEVICE_ACCESS_TOKEN/telemetry \
+  --cert /path/to/device-cert.pem \
+  --key /path/to/device-key.pem \
+  -t application/json \
+  -e '{"temperature": 22.0}'
+```
+
+## Efento Sensor Protocol
+
+ThingsBoard provides dedicated CoAP resources for **Efento NB-IoT sensors** that transmit using the Efento binary protocol (protobuf). These sensors communicate with the server at:
+
+| Resource | URI Path |
+|----------|---------|
+| Measurements | `coap://{host}/efento/m` |
+| Device Info | `coap://{host}/efento/i` |
+| Configuration | `coap://{host}/efento/c` |
+| Current Timestamp | `coap://{host}/efento/t` |
+
+Efento sensors must be configured to point to your ThingsBoard instance. No access token is required in the path — the device is identified by its unique hardware ID embedded in the protobuf message.
+
+<Note>
+  CoAP Observe eliminates the need for polling loops on the device. Once a device registers an observation on `rpc` or `attributes`, ThingsBoard pushes updates over UDP as soon as they occur — saving battery and bandwidth on constrained devices.
+</Note>
+
+<Warning>
+  CoAP operates over UDP, which is connectionless. ThingsBoard session state is maintained in memory per device endpoint address. If the device's IP or port changes (common on cellular networks), it must re-register any active observations.
+</Warning>

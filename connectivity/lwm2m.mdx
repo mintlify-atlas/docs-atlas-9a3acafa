@@ -1,0 +1,148 @@
+---
+title: "Connect LwM2M Devices to ThingsBoard"
+sidebarTitle: "LwM2M"
+description: "ThingsBoard implements the OMA LwM2M 1.0/1.1 standard for cellular IoT device management. Supports bootstrapping, object model mapping, and firmware updates over LwM2M."
+---
+
+LwM2M (Lightweight Machine to Machine) is an OMA-defined device management and telemetry protocol built on top of CoAP and DTLS. It is widely used in cellular IoT — NB-IoT, LTE-M, and GPRS — and provides a standardized object model for device capabilities, sensor readings, and remote management operations. ThingsBoard implements a full LwM2M 1.0/1.1 server (powered by the Eclipse Leshan library) including a Bootstrap server, enabling complete lifecycle management of constrained devices from first-boot provisioning through to firmware updates.
+
+## Port Reference
+
+| Server | Protocol | Default Port | Environment Variable |
+|--------|----------|:------------:|----------------------|
+| LwM2M Server | CoAP (UDP) | **5685** | `LWM2M_BIND_PORT` |
+| LwM2M Server | CoAP + DTLS (UDP) | **5686** | `LWM2M_SECURITY_BIND_PORT` |
+| Bootstrap Server | CoAP (UDP) | **5687** | `LWM2M_BS_BIND_PORT` |
+| Bootstrap Server | CoAP + DTLS (UDP) | **5688** | `LWM2M_BS_SECURITY_BIND_PORT` |
+
+## Security Modes
+
+ThingsBoard supports all four LwM2M security modes. The mode is configured per device in the ThingsBoard device credentials editor.
+
+<CardGroup cols={2}>
+  <Card title="No Security (NO_SEC)" icon="circle-exclamation">
+    Plaintext CoAP with no authentication. Use only on isolated test networks. The device endpoint name serves as the identifier.
+  </Card>
+  <Card title="Pre-Shared Key (PSK)" icon="key">
+    DTLS with a shared identity and secret key pair. Efficient for devices without certificate infrastructure. Identity and key are provisioned in ThingsBoard credentials.
+  </Card>
+  <Card title="Raw Public Key (RPK)" icon="fingerprint">
+    DTLS with an asymmetric key pair. The device's public key is registered in ThingsBoard without requiring a CA-signed certificate.
+  </Card>
+  <Card title="X.509 Certificate" icon="certificate">
+    DTLS with full PKI. The device presents a certificate signed by a CA trusted by ThingsBoard. Recommended for production deployments.
+  </Card>
+</CardGroup>
+
+## LwM2M Object Model
+
+LwM2M organizes device capabilities into **Objects**, each identified by a numeric ID. Each object contains one or more **Resources** (also identified by numbers). ThingsBoard can map any object/resource path to a ThingsBoard telemetry key or attribute.
+
+Common IPSO Smart Objects used in ThingsBoard device profiles:
+
+| Object ID | Name | Example Resources |
+|:---------:|------|-------------------|
+| `/3` | Device | Manufacturer `/3/0/0`, Model `/3/0/1`, Firmware Version `/3/0/3` |
+| `/3303` | Temperature | Sensor Value `/3303/0/5700` |
+| `/3304` | Humidity | Sensor Value `/3304/0/5700` |
+| `/3305` | Power Measurement | Active Power `/3305/0/5800` |
+| `/3313` | Accelerometer | X Value `/3313/0/5702`, Y Value `/3313/0/5703` |
+| `/5` | Firmware Update | Package URI `/5/0/1`, State `/5/0/3`, Update Result `/5/0/5` |
+| `/9` | Software Management | Package URI `/9/0/3`, Activation State `/9/0/12` |
+
+The path format is `/{objectId}/{instanceId}/{resourceId}`.
+
+## Device Profile Configuration
+
+In ThingsBoard, the LwM2M Device Profile transport configuration maps object/resource paths to telemetry keys and attributes. The `observeAttr` section controls which resources are observed (pushed by the device) and which become telemetry vs. attributes.
+
+```json
+{
+  "observeAttr": {
+    "keyName": {
+      "/3303/0/5700": "temperature",
+      "/3304/0/5700": "humidity",
+      "/3/0/3": "firmwareVersion"
+    },
+    "observe": [
+      "/3303/0/5700",
+      "/3304/0/5700"
+    ],
+    "attribute": [
+      "/3/0/3"
+    ],
+    "telemetry": [
+      "/3303/0/5700",
+      "/3304/0/5700"
+    ],
+    "attributeLwm2m": {
+      "/3303/0": {
+        "ver": "1.1"
+      }
+    }
+  },
+  "bootstrapServerUpdateEnable": false,
+  "clientLwM2mSettings": {
+    "edrxCycle": null,
+    "powerMode": "DRX",
+    "psmActivityTimer": null,
+    "pagingTransmissionWindow": null,
+    "defaultObjectInstanceRetryCountOnError": 1
+  }
+}
+```
+
+Resources listed in `observe` will be registered for observation — the device pushes new values whenever they change. Resources in `telemetry` are stored as time-series data; resources in `attribute` are stored as device attributes.
+
+## Bootstrapping Workflow
+
+The Bootstrap server allows a factory-fresh device to securely receive its LwM2M server address and credentials at first boot without pre-configured server details.
+
+<Steps>
+  <Step title="Factory provisioning">
+    The device leaves the factory with only the Bootstrap server address (`5687`/`5688`) and Bootstrap credentials (PSK identity or certificate).
+  </Step>
+  <Step title="Bootstrap request">
+    On first boot, the device connects to the Bootstrap server on port `5687` (or `5688` for DTLS) and sends a `Bootstrap Request`.
+  </Step>
+  <Step title="Bootstrap response">
+    ThingsBoard Bootstrap server writes the LwM2M server URI, port, and operational credentials (PSK/certificate) to the device's Security Object (`/0`) and Server Object (`/1`).
+  </Step>
+  <Step title="Connect to LwM2M server">
+    With the provisioned credentials, the device registers with the main LwM2M server on port `5685` or `5686`.
+  </Step>
+  <Step title="Normal operation">
+    The device sends the initial `Register` message containing its supported objects. ThingsBoard applies the device profile mapping and begins observing configured resources.
+  </Step>
+</Steps>
+
+## Firmware Update via LwM2M (Object 5)
+
+ThingsBoard supports OTA firmware updates using the standard LwM2M Firmware Update object (`/5`). The server writes the firmware package URI to `/5/0/1`, monitors update state via `/5/0/3`, and checks the result in `/5/0/5`.
+
+| Resource | Path | Description |
+|----------|------|-------------|
+| Package URI | `/5/0/1` | URL from which device downloads the firmware |
+| State | `/5/0/3` | `0`=Idle, `1`=Downloading, `2`=Downloaded, `3`=Updating |
+| Update Result | `/5/0/5` | `0`=Initial, `1`=Success, `2–9`=Error codes |
+| Update | `/5/0/2` | Execute resource that triggers the firmware install |
+
+ThingsBoard initiates the process from the OTA Packages section of the device management UI — no manual resource writing is required.
+
+## LwM2M v1.1 Features
+
+<Note>
+  ThingsBoard supports **LwM2M v1.1** features including **SenML JSON** and **SenML CBOR** encoding for more compact and expressive data payloads. The supported LwM2M version is configured in the `clientLwM2mSettings.lwm2mVersion` field of the device profile (defaults to `"1.0"`). Set it to `"1.1"` to enable SenML encoding and LwM2M v1.1 registration interface extensions such as Queue Mode enhancements and Send operations.
+</Note>
+
+## Power Saving Modes
+
+ThingsBoard is aware of cellular power-saving modes and handles dormant devices gracefully:
+
+| Mode | Description | ThingsBoard behavior |
+|------|-------------|----------------------|
+| **DRX** (Default) | Device is always reachable | Normal observe/notify |
+| **PSM** (Power Saving Mode) | Device sleeps; wakes on timer | Commands queued until device registers |
+| **eDRX** (Extended DRX) | Paging windows at longer intervals | Commands queued, delivered during paging window |
+
+Configure `powerMode`, `psmActivityTimer`, `edrxCycle`, and `pagingTransmissionWindow` in the device profile's `clientLwM2mSettings` to match your device's power-saving configuration.

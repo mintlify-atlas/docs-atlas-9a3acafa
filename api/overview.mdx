@@ -1,0 +1,195 @@
+---
+title: "ThingsBoard REST API Reference Overview"
+sidebarTitle: "Overview"
+description: "ThingsBoard exposes a comprehensive REST API for managing devices, assets, telemetry, dashboards, users, and tenants. All endpoints require JWT authentication."
+---
+
+ThingsBoard provides a full-featured REST API that lets you programmatically manage every aspect of the platform — from provisioning devices and assets to reading time-series telemetry, configuring rule chains, and administering tenants. Every endpoint returns JSON, and all protected routes require a JWT Bearer token obtained by authenticating against the `/api/auth/login` endpoint.
+
+## Base URL
+
+All REST API requests are made relative to your ThingsBoard host:
+
+```
+https://{host}:{port}/api
+```
+
+For a default local installation the base URL is `http://localhost:8080/api`. Replace `{host}` and `{port}` with the hostname and port of your ThingsBoard deployment.
+
+<Info>
+  ThingsBoard Cloud (thingsboard.cloud) uses `https://thingsboard.cloud/api`. Self-hosted deployments on port 443 (TLS-terminated) do not require a port suffix.
+</Info>
+
+## Authentication
+
+All API calls (except the login endpoint and a handful of `noauth` utility routes) require a JSON Web Token transmitted as an HTTP `Authorization` header:
+
+```
+Authorization: Bearer <JWT access token>
+```
+
+Obtain a token by posting credentials to `POST /api/auth/login`. The response contains both an access token (valid for **2.5 hours** by default) and a refresh token (valid for **1 week** by default). Use `POST /api/auth/token` to exchange a refresh token for a fresh access token without re-entering credentials.
+
+<Tip>
+  See the [Authentication](/api/authentication) page for a complete walk-through, curl examples, and a table of default credentials.
+</Tip>
+
+## Response Format
+
+Every API response body is JSON. Successful responses use standard HTTP 2xx status codes. List endpoints return a paginated envelope:
+
+```json
+{
+  "data": [ ... ],
+  "totalPages": 4,
+  "totalElements": 38,
+  "hasNext": true
+}
+```
+
+## API Categories
+
+<CardGroup cols={2}>
+  <Card title="Authentication" icon="key" href="/api/authentication">
+    Login, logout, token refresh, and current-user info. Base path: `/api/auth`
+  </Card>
+  <Card title="Devices" icon="microchip" href="/api/devices">
+    Device CRUD, credentials management, and device profiles. Base path: `/api/device`
+  </Card>
+  <Card title="Assets" icon="building" href="/api/assets">
+    Asset CRUD and asset profiles. Base path: `/api/asset`
+  </Card>
+  <Card title="Telemetry" icon="chart-line" href="/api/telemetry">
+    Read and write time-series data and attributes. Base path: `/api/plugins/telemetry`
+  </Card>
+  <Card title="Dashboards" icon="gauge" href="/api/dashboards">
+    Dashboard CRUD and assignment. Base path: `/api/dashboard`
+  </Card>
+  <Card title="Rule Chains" icon="diagram-project" href="/api/rule-chains">
+    Rule chain management and debugging. Base path: `/api/rule-chain`
+  </Card>
+  <Card title="Alarms" icon="bell" href="/api/alarms">
+    Alarm lifecycle and acknowledgement. Base path: `/api/alarm`
+  </Card>
+  <Card title="Tenants" icon="building-columns" href="/api/tenants">
+    Tenant management (System Administrator only). Base path: `/api/tenant`
+  </Card>
+  <Card title="Users" icon="users" href="/api/users">
+    User CRUD, roles, and customer assignments. Base path: `/api/user`
+  </Card>
+</CardGroup>
+
+The table below gives a compact reference of every major category:
+
+| Category | Base Path | Description |
+|---|---|---|
+| Authentication | `/api/auth` | Login, logout, token refresh |
+| Devices | `/api/device` | Device CRUD and management |
+| Assets | `/api/asset` | Asset CRUD and management |
+| Telemetry | `/api/plugins/telemetry` | Read/write time-series and attributes |
+| Dashboards | `/api/dashboard` | Dashboard CRUD |
+| Rule Chains | `/api/rule-chain` | Rule chain management |
+| Alarms | `/api/alarm` | Alarm management |
+| Tenants | `/api/tenant` | Tenant management (System Admin only) |
+| Users | `/api/user` | User management |
+
+## Pagination
+
+List endpoints that may return large result sets accept the following query parameters:
+
+<ParamField query="pageSize" type="integer" required>
+  Maximum number of records to return per page. Must be a positive integer (e.g. `10`, `50`, `100`).
+</ParamField>
+
+<ParamField query="page" type="integer" required>
+  Zero-based page index. Pass `0` for the first page, `1` for the second, and so on.
+</ParamField>
+
+<ParamField query="sortProperty" type="string">
+  Entity field to sort by (e.g. `name`, `createdTime`). Defaults vary per endpoint.
+</ParamField>
+
+<ParamField query="sortOrder" type="string">
+  Sort direction. Accepted values: `ASC`, `DESC`. Defaults to `ASC`.
+</ParamField>
+
+<ParamField query="textSearch" type="string">
+  Optional case-insensitive substring filter applied to the primary searchable field (usually `name`).
+</ParamField>
+
+**Example — fetch the second page of 25 devices sorted by creation time:**
+
+```
+GET /api/tenant/devices?pageSize=25&page=1&sortProperty=createdTime&sortOrder=DESC
+```
+
+## Error Codes
+
+ThingsBoard uses standard HTTP status codes for all error conditions.
+
+| Code | Meaning | Common Cause |
+|---|---|---|
+| `400` | Bad Request | Malformed JSON body, missing required field, or invalid parameter value |
+| `401` | Unauthorized | Missing or expired JWT token |
+| `403` | Forbidden | Authenticated user lacks permission for the requested resource or operation |
+| `404` | Not Found | Entity with the specified ID does not exist or is not visible to the caller |
+| `429` | Too Many Requests | Rate limit exceeded (e.g. password-reset endpoint throttle) |
+
+Error responses include a JSON body with additional context:
+
+```json
+{
+  "status": 403,
+  "message": "You don't have permission to perform this operation!",
+  "errorCode": 20,
+  "timestamp": "2024-11-01T12:00:00.000+00:00"
+}
+```
+
+## WebSocket API
+
+In addition to REST, ThingsBoard exposes a WebSocket endpoint for real-time telemetry subscriptions:
+
+```
+ws://{host}/api/ws/plugins/telemetry
+```
+
+Use `wss://` for TLS-enabled deployments. After connecting, send a JSON subscription command to receive live attribute and time-series updates pushed by the server without polling.
+
+<Note>
+  WebSocket connections require the same JWT token passed as a query parameter:
+  `ws://localhost:8080/api/ws/plugins/telemetry?token=<JWT>`
+</Note>
+
+## REST Client Library
+
+The ThingsBoard repository ships a ready-made Java REST client in the `rest-client` module. It wraps every API endpoint and handles JWT token acquisition, automatic token refresh, and request retries.
+
+```java
+RestClient client = new RestClient("http://localhost:8080");
+client.login("tenant@thingsboard.org", "tenant");
+
+// List first 10 devices
+PageData<DeviceInfo> devices = client.getTenantDeviceInfos(
+    new PageLink(10), null, null
+);
+```
+
+The client is published to Maven Central as `org.thingsboard:rest-client`. Add the dependency matching your ThingsBoard server version.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Authentication" icon="lock" href="/api/authentication">
+    Learn how to obtain and refresh JWT tokens, view default credentials, and configure OAuth2 SSO.
+  </Card>
+  <Card title="Devices API" icon="microchip" href="/api/devices">
+    Provision devices, manage credentials, and query device profiles via the REST API.
+  </Card>
+  <Card title="Telemetry API" icon="chart-line" href="/api/telemetry">
+    Push and query time-series data and attributes for any entity.
+  </Card>
+  <Card title="Rule Chains API" icon="diagram-project" href="/api/rule-chains">
+    Create, update, and activate rule chains programmatically.
+  </Card>
+</CardGroup>

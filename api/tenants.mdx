@@ -1,0 +1,311 @@
+---
+title: "REST API Endpoints for Tenant Management in ThingsBoard"
+sidebarTitle: "Tenants"
+description: "Manage ThingsBoard tenants via the REST API. Create tenants, assign tenant profiles, and query tenant details. Requires System Administrator role."
+---
+
+In ThingsBoard, a **tenant** is a top-level, fully isolated organization within the platform. Each tenant has its own devices, dashboards, users, rule chains, and data — completely separated from every other tenant. Multi-tenancy is a core architectural feature of ThingsBoard, enabling SaaS deployments where a single platform instance serves multiple independent organizations. All tenant management endpoints require the **System Administrator** role.
+
+---
+
+## Tenant object
+
+Every tenant is represented by the following fields when creating or updating via the API:
+
+<ResponseField name="id" type="object">
+  Unique identifier for the tenant. Contains a nested `entityType: "TENANT"` and a UUID `id` string.
+</ResponseField>
+
+<ResponseField name="title" type="string" required>
+  Human-readable name of the tenant organization (e.g., `"Acme Industrial"`).
+</ResponseField>
+
+<ResponseField name="region" type="string">
+  Geographic region for grouping or routing purposes.
+</ResponseField>
+
+<ResponseField name="country" type="string">
+  Country where the tenant is located.
+</ResponseField>
+
+<ResponseField name="city" type="string">
+  City where the tenant is located.
+</ResponseField>
+
+<ResponseField name="address" type="string">
+  Street address of the tenant organization.
+</ResponseField>
+
+<ResponseField name="email" type="string">
+  Primary contact email for the tenant.
+</ResponseField>
+
+<ResponseField name="phone" type="string">
+  Contact phone number for the tenant.
+</ResponseField>
+
+<ResponseField name="additionalInfo" type="object">
+  Arbitrary JSON object for custom metadata (e.g., `{"description": "Primary industrial client"}`).
+</ResponseField>
+
+<ResponseField name="tenantProfileId" type="object">
+  Reference to the tenant profile that controls quota and rate-limiting settings for this tenant.
+</ResponseField>
+
+---
+
+## Tenant profile
+
+A **tenant profile** defines the operational boundaries for all tenants assigned to it. Profiles are reusable — a single profile (e.g., `"Enterprise"`) can be assigned to many tenants, making quota management straightforward.
+
+Key profile configuration fields include:
+
+- **Max devices** — maximum number of devices the tenant can register
+- **Max dashboards** — maximum number of dashboards
+- **Max API calls/month** — REST and WebSocket API call quota
+- **Max data points/month** — total telemetry data points that may be stored
+- **Queue configuration** — controls rule-engine message routing for the tenant
+
+---
+
+## Endpoints
+
+### Create or update a tenant
+
+<Note>
+  Requires **System Administrator** role. Passing an existing `id` updates the tenant; omitting `id` creates a new one.
+</Note>
+
+```http
+POST /api/tenant
+Authorization: Bearer {jwtToken}
+Content-Type: application/json
+```
+
+**Request body**
+
+```json
+{
+  "title": "Acme Industrial",
+  "region": "US",
+  "country": "United States",
+  "city": "San Francisco",
+  "address": "123 Main Street",
+  "email": "admin@acme.io",
+  "phone": "+1-415-000-0000",
+  "additionalInfo": {
+    "description": "Primary enterprise tenant"
+  }
+}
+```
+
+**Response** — the saved tenant object including the generated `id`.
+
+---
+
+### Get tenant by ID
+
+```http
+GET /api/tenant/{tenantId}
+Authorization: Bearer {jwtToken}
+```
+
+<ParamField path="tenantId" type="string" required>
+  UUID of the tenant to retrieve.
+</ParamField>
+
+---
+
+### Delete tenant
+
+<Warning>
+  Deleting a tenant is **permanent and irreversible**. All associated devices, users, dashboards, and telemetry data are permanently removed.
+</Warning>
+
+```http
+DELETE /api/tenant/{tenantId}
+Authorization: Bearer {jwtToken}
+```
+
+<ParamField path="tenantId" type="string" required>
+  UUID of the tenant to delete.
+</ParamField>
+
+---
+
+### List all tenants
+
+Returns a paginated list of all tenants registered on the platform.
+
+```http
+GET /api/tenants?pageSize={pageSize}&page={page}
+Authorization: Bearer {jwtToken}
+```
+
+<ParamField query="pageSize" type="integer" required>
+  Number of results per page (e.g., `10`).
+</ParamField>
+
+<ParamField query="page" type="integer" required>
+  Zero-based page number (e.g., `0` for the first page).
+</ParamField>
+
+<ParamField query="sortProperty" type="string">
+  Field to sort by. Allowed: `createdTime`, `title`, `email`, `country`, `city`. Default: `title`.
+</ParamField>
+
+<ParamField query="sortOrder" type="string">
+  Sort direction: `ASC` or `DESC`. Default: `ASC`.
+</ParamField>
+
+<ParamField query="textSearch" type="string">
+  Optional substring filter applied to the tenant title.
+</ParamField>
+
+**Example response**
+
+```json
+{
+  "data": [
+    {
+      "id": { "entityType": "TENANT", "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6" },
+      "title": "Acme Industrial",
+      "region": "US",
+      "email": "admin@acme.io"
+    }
+  ],
+  "totalPages": 1,
+  "totalElements": 1,
+  "hasNext": false
+}
+```
+
+---
+
+### Create or update a tenant profile
+
+```http
+POST /api/tenantProfile
+Authorization: Bearer {jwtToken}
+Content-Type: application/json
+```
+
+**Request body**
+
+```json
+{
+  "name": "Enterprise",
+  "description": "Profile for enterprise customers",
+  "isolatedTbRuleEngine": false,
+  "profileData": {
+    "configuration": {
+      "type": "DEFAULT",
+      "maxDevices": 10000,
+      "maxAssets": 10000,
+      "maxDashboards": 1000,
+      "maxRuleChains": 200,
+      "maxResourcesInBytes": 0,
+      "maxOtaPackagesInBytes": 0,
+      "transportTenantMsgRateLimit": "1000:1,20000:60",
+      "transportTenantTelemetryMsgRateLimit": "1000:1,10000:60",
+      "maxTransportMessages": 10000000,
+      "maxTransportDataPoints": 10000000,
+      "maxREExecutions": 4000000,
+      "maxJSExecutions": 5000000,
+      "maxEmails": 0,
+      "maxSms": 0,
+      "maxCreatedAlarms": 1000,
+      "defaultStorageTtlDays": 0,
+      "alarmsTtlDays": 0
+    }
+  }
+}
+```
+
+---
+
+### List tenant profiles
+
+```http
+GET /api/tenantProfiles?pageSize={pageSize}&page={page}
+Authorization: Bearer {jwtToken}
+```
+
+<ParamField query="pageSize" type="integer" required>
+  Number of results per page.
+</ParamField>
+
+<ParamField query="page" type="integer" required>
+  Zero-based page index.
+</ParamField>
+
+---
+
+### Set default tenant profile
+
+```http
+POST /api/tenantProfile/{tenantProfileId}/default
+Authorization: Bearer {jwtToken}
+```
+
+<ParamField path="tenantProfileId" type="string" required>
+  UUID of the tenant profile to set as the platform default.
+</ParamField>
+
+---
+
+## Full example: create a tenant and assign a profile
+
+<Steps>
+  <Step title="Create the tenant profile">
+    ```bash
+    curl -X POST https://thingsboard.example.com/api/tenantProfile \
+      -H "Authorization: Bearer $SYS_ADMIN_JWT" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "name": "Enterprise",
+        "profileData": {
+          "configuration": {
+            "type": "DEFAULT",
+            "maxDevices": 5000
+          }
+        }
+      }'
+    ```
+    Save the returned profile `id`.
+  </Step>
+
+  <Step title="Create the tenant, referencing the profile">
+    ```bash
+    curl -X POST https://thingsboard.example.com/api/tenant \
+      -H "Authorization: Bearer $SYS_ADMIN_JWT" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "title": "Acme Industrial",
+        "email": "admin@acme.io",
+        "tenantProfileId": {
+          "entityType": "TENANT_PROFILE",
+          "id": "<profile-uuid>"
+        }
+      }'
+    ```
+  </Step>
+
+  <Step title="Verify the tenant was created">
+    ```bash
+    curl https://thingsboard.example.com/api/tenants?pageSize=10&page=0 \
+      -H "Authorization: Bearer $SYS_ADMIN_JWT"
+    ```
+  </Step>
+</Steps>
+
+---
+
+## Error codes
+
+| HTTP Status | Meaning |
+|-------------|---------|
+| `400 Bad Request` | Missing required field (e.g., `title`) or malformed JSON |
+| `401 Unauthorized` | Missing or expired JWT token |
+| `403 Forbidden` | Authenticated user does not have System Administrator role |
+| `404 Not Found` | Tenant or profile UUID does not exist |

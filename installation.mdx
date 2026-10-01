@@ -1,0 +1,408 @@
+---
+title: "Install ThingsBoard: Docker, Kubernetes, and Packages"
+sidebarTitle: "Installation"
+description: "Deploy ThingsBoard using Docker Compose for development or Kubernetes for production. Supports PostgreSQL and Cassandra, with optional Kafka for high-throughput messaging."
+---
+
+ThingsBoard can be installed in several ways depending on your environment and operational requirements. Docker Compose is the fastest path to a running instance and is ideal for development and small deployments. Kubernetes is recommended for production workloads that require horizontal scaling and high availability. The Debian/Ubuntu package is suitable for teams that prefer running the application directly on the host OS without containers.
+
+## Prerequisites
+
+| Requirement | Minimum Version | Notes |
+|-------------|----------------|-------|
+| **Java** | 25 (JDK) | Only needed for package installs; Docker images include a JRE. Compiler target in `pom.xml` is set to Java 25. |
+| **PostgreSQL** | 15+ | Primary relational database; stores entities, attributes, and (by default) time-series data. |
+| **Docker Engine** | 20.10+ | Required for Docker Compose and Kubernetes (via container runtime). |
+| **Docker Compose** | v2.x | For the Docker Compose installation method. |
+| **RAM** | 2 GB minimum | 4 GB+ recommended for development; 8 GB+ for production monolith. |
+
+<Info>
+  For production time-series workloads with very high ingest rates, ThingsBoard also supports **Apache Cassandra** as the time-series backend (`DATABASE_TS_TYPE=cassandra`) and **TimescaleDB** (`DATABASE_TS_TYPE=timescale`). The default SQL backend on PostgreSQL is sufficient for most use cases.
+</Info>
+
+---
+
+<Tabs>
+  <Tab title="Docker Compose">
+    Docker Compose is the recommended way to run ThingsBoard locally or on a single server. The setup below uses PostgreSQL as the database and the in-memory queue — no Kafka or ZooKeeper required.
+
+    ### 1. Create a working directory
+
+    ```bash
+    mkdir -p ~/thingsboard-docker && cd ~/thingsboard-docker
+    ```
+
+    ### 2. Create the `docker-compose.yml` file
+
+    The following `docker-compose.yml` starts ThingsBoard together with a PostgreSQL 15 container. Key environment variables are drawn directly from `thingsboard.yml` defaults.
+
+    ```yaml
+    version: "3.8"
+
+    services:
+      tb-postgres:
+        image: postgres:15
+        restart: always
+        environment:
+          POSTGRES_DB: thingsboard
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        volumes:
+          - tb-postgres-data:/var/lib/postgresql/data
+
+      tb-node:
+        image: thingsboard/tb-node:latest
+        restart: always
+        depends_on:
+          - tb-postgres
+        ports:
+          - "8080:8080"   # HTTP API and Web UI
+          - "1883:1883"   # MQTT (plain)
+          - "5683:5683/udp" # CoAP
+        environment:
+          # --- Installation flags ---
+          INSTALL_TB: "true"          # Run DB schema install on first start
+          LOAD_DEMO: "false"          # Set to "true" to load demo devices and dashboards
+
+          # --- Queue type ---
+          TB_QUEUE_TYPE: "in-memory"  # Use "kafka" for microservices / high-throughput
+
+          # --- Database: time-series and latest telemetry ---
+          DATABASE_TS_TYPE: "sql"
+          DATABASE_TS_LATEST_TYPE: "sql"
+
+          # --- Spring / PostgreSQL datasource ---
+          SPRING_DRIVER_CLASS_NAME: "org.postgresql.Driver"
+          SPRING_DATASOURCE_URL: "jdbc:postgresql://tb-postgres:5432/thingsboard"
+          SPRING_DATASOURCE_USERNAME: "postgres"
+          SPRING_DATASOURCE_PASSWORD: "postgres"
+          SPRING_DATASOURCE_MAXIMUM_POOL_SIZE: "16"
+
+          # --- HTTP server ---
+          HTTP_BIND_ADDRESS: "0.0.0.0"
+          HTTP_BIND_PORT: "8080"
+
+          # --- MQTT transport ---
+          MQTT_ENABLED: "true"
+          MQTT_BIND_PORT: "1883"
+
+          # --- CoAP transport ---
+          COAP_ENABLED: "true"
+
+          # --- JVM tuning ---
+          JAVA_OPTS: "-Xmx1024m -Xms512m"
+        volumes:
+          - tb-node-data:/data
+          - tb-node-logs:/var/log/thingsboard
+
+    volumes:
+      tb-postgres-data:
+      tb-node-data:
+      tb-node-logs:
+    ```
+
+    ### 3. Start the stack
+
+    ```bash
+    docker compose up -d
+    ```
+
+    On the very first run, `INSTALL_TB: "true"` causes the ThingsBoard container to execute the database schema installation (`ThingsboardInstallApplication`) before starting the server. This takes roughly 30–60 seconds.
+
+    ### 4. Watch the logs
+
+    ```bash
+    docker compose logs -f tb-node
+    ```
+
+    Wait until you see a line similar to:
+
+    ```
+    Started ThingsBoard in 45 seconds
+    ```
+
+    ### 5. After the first start, disable the install flag
+
+    Once installation is complete, edit `docker-compose.yml` and set `INSTALL_TB` to `"false"` (or remove the variable entirely) to prevent the installer from running on subsequent restarts:
+
+    ```yaml
+    INSTALL_TB: "false"
+    ```
+
+    Then apply the change:
+
+    ```bash
+    docker compose up -d tb-node
+    ```
+
+    ### Key Environment Variables Reference
+
+    The table below documents the most commonly tuned environment variables. All variables map directly to `thingsboard.yml` settings via `${ENV_VAR:default}` substitution.
+
+    | Variable | Default | Description |
+    |----------|---------|-------------|
+    | `HTTP_BIND_PORT` | `8080` | Port the HTTP server and web UI listen on. |
+    | `MQTT_BIND_PORT` | `1883` | Plain-text MQTT listener port. |
+    | `MQTT_SSL_BIND_PORT` | `8883` | TLS MQTT listener port (requires `MQTT_SSL_ENABLED=true`). |
+    | `LWM2M_BIND_PORT` | `5685` | LwM2M plain-text port. |
+    | `LWM2M_SECURITY_BIND_PORT` | `5686` | LwM2M DTLS security port. |
+    | `SNMP_BIND_PORT` | `0` (random) | SNMP bind port; set a fixed value when receiving SNMP TRAPs. |
+    | `DATABASE_TS_TYPE` | `sql` | Time-series backend: `sql`, `cassandra`, or `timescale`. |
+    | `DATABASE_TS_LATEST_TYPE` | `sql` | Latest-telemetry backend: `sql`, `cassandra`, or `timescale`. |
+    | `SPRING_DATASOURCE_URL` | `jdbc:postgresql://localhost:5432/thingsboard` | JDBC URL for the primary PostgreSQL database. |
+    | `SPRING_DATASOURCE_USERNAME` | `postgres` | PostgreSQL username. |
+    | `SPRING_DATASOURCE_PASSWORD` | `postgres` | PostgreSQL password. |
+    | `SPRING_DATASOURCE_MAXIMUM_POOL_SIZE` | `16` | HikariCP maximum connection pool size. |
+    | `TB_QUEUE_TYPE` | `in-memory` | Message queue: `in-memory` (monolith) or `kafka` (MSA). |
+    | `ZOOKEEPER_ENABLED` | `false` | Enable ZooKeeper-based service discovery for MSA mode. |
+    | `ZOOKEEPER_URL` | `localhost:2181` | ZooKeeper connection string. |
+    | `SSL_ENABLED` | `false` | Enable HTTPS on the HTTP server. |
+    | `MQTT_SSL_ENABLED` | `false` | Enable TLS on the MQTT listener. |
+    | `JAVA_OPTS` | *(unset)* | Pass extra JVM flags such as `-Xmx` and `-Xms`. |
+    | `INSTALL_TB` | `false` | Set to `true` on first run to initialise the database schema. |
+    | `UPGRADE_TB` | `false` | Set to `true` (with `FROM_VERSION`) to run a schema migration. |
+  </Tab>
+
+  <Tab title="Kubernetes">
+    Kubernetes is the recommended target for production deployments that need horizontal scaling, rolling updates, and high availability. ThingsBoard's microservices architecture (`MSA`) maps cleanly onto Kubernetes workloads.
+
+    ### Overview of Required Components
+
+    A production ThingsBoard Kubernetes deployment typically consists of:
+
+    | Component | Kubernetes Kind | Notes |
+    |-----------|----------------|-------|
+    | `tb-node` | `Deployment` / `StatefulSet` | Core ThingsBoard application (can be split into `tb-core` + `tb-rule-engine` in full MSA). |
+    | PostgreSQL | `StatefulSet` | Or an external managed database (RDS, Cloud SQL, etc.). |
+    | Apache Kafka | `StatefulSet` | Required when `TB_QUEUE_TYPE=kafka`; replaces the in-memory queue for multi-node setups. |
+    | ZooKeeper | `StatefulSet` | Required for Kafka and for ThingsBoard service discovery (`ZOOKEEPER_ENABLED=true`). |
+    | Ingress / LoadBalancer | `Service` | Exposes port 8080 (HTTP/UI) and 1883 (MQTT). |
+
+    ### Example: tb-node Deployment manifest
+
+    ```yaml
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: tb-node
+      labels:
+        app: tb-node
+    spec:
+      replicas: 2
+      selector:
+        matchLabels:
+          app: tb-node
+      template:
+        metadata:
+          labels:
+            app: tb-node
+        spec:
+          containers:
+            - name: tb-node
+              image: thingsboard/tb-node:latest
+              ports:
+                - containerPort: 8080
+                - containerPort: 1883
+              env:
+                - name: TB_QUEUE_TYPE
+                  value: "kafka"
+                - name: TB_KAFKA_SERVERS
+                  value: "kafka:9092"
+                - name: ZOOKEEPER_ENABLED
+                  value: "true"
+                - name: ZOOKEEPER_URL
+                  value: "zookeeper:2181"
+                - name: DATABASE_TS_TYPE
+                  value: "sql"
+                - name: SPRING_DATASOURCE_URL
+                  value: "jdbc:postgresql://postgres:5432/thingsboard"
+                - name: SPRING_DATASOURCE_USERNAME
+                  valueFrom:
+                    secretKeyRef:
+                      name: tb-db-secret
+                      key: username
+                - name: SPRING_DATASOURCE_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: tb-db-secret
+                      key: password
+              resources:
+                requests:
+                  memory: "1Gi"
+                  cpu: "500m"
+                limits:
+                  memory: "2Gi"
+                  cpu: "2000m"
+    ```
+
+    ### Secrets for database credentials
+
+    ```bash
+    kubectl create secret generic tb-db-secret \
+      --from-literal=username=postgres \
+      --from-literal=password=<your-secure-password>
+    ```
+
+    ### Service to expose the UI and MQTT
+
+    ```yaml
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: tb-node
+    spec:
+      type: LoadBalancer
+      selector:
+        app: tb-node
+      ports:
+        - name: http
+          port: 80
+          targetPort: 8080
+        - name: mqtt
+          port: 1883
+          targetPort: 1883
+    ```
+
+    <Note>
+      For a complete, production-tested set of Kubernetes manifests including Kafka, ZooKeeper, and separate `tb-core` / `tb-rule-engine` deployments, refer to the official [ThingsBoard Kubernetes guide](https://thingsboard.io/docs/pe/install/cluster/kubernetes-cluster-setup/) and the community-maintained Helm charts.
+    </Note>
+  </Tab>
+
+  <Tab title="Ubuntu Package">
+    The Debian/Ubuntu package installs ThingsBoard as a `systemd` service directly on the host. This method is recommended when you want to manage ThingsBoard without Docker.
+
+    ### 1. Install Java 25
+
+    ThingsBoard requires a JDK/JRE compatible with Java 25 (the project's compiler target). Install it with:
+
+    ```bash
+    sudo apt-get update
+    sudo apt-get install -y openjdk-21-jre-headless
+    ```
+
+    <Info>
+      While the Maven build compiles to Java 25, a Java 21 LTS JRE is sufficient for running the pre-built `.deb` release packages distributed by ThingsBoard. Check the [official release notes](https://thingsboard.io/docs/pe/installation/) for the exact JRE requirement for your target version.
+    </Info>
+
+    ### 2. Install and configure PostgreSQL
+
+    ```bash
+    sudo apt-get install -y postgresql postgresql-contrib
+    sudo service postgresql start
+
+    sudo -u postgres psql -c "CREATE DATABASE thingsboard;"
+    sudo -u postgres psql -c "ALTER USER postgres WITH PASSWORD 'postgres';"
+    ```
+
+    ### 3. Download and install the ThingsBoard package
+
+    ```bash
+    # Download the latest .deb package
+    wget https://github.com/thingsboard/thingsboard/releases/latest/download/thingsboard.deb
+
+    # Install
+    sudo dpkg -i thingsboard.deb
+    ```
+
+    ### 4. Configure the database connection
+
+    Edit `/etc/thingsboard/conf/thingsboard.conf` (or set environment variables in `/etc/thingsboard/conf/thingsboard.conf`) to point to your PostgreSQL instance:
+
+    ```bash
+    # /etc/thingsboard/conf/thingsboard.conf
+    export SPRING_DATASOURCE_URL=jdbc:postgresql://localhost:5432/thingsboard
+    export SPRING_DATASOURCE_USERNAME=postgres
+    export SPRING_DATASOURCE_PASSWORD=postgres
+
+    export DATABASE_TS_TYPE=sql
+    export DATABASE_TS_LATEST_TYPE=sql
+
+    export JAVA_OPTS="-Xmx1024m -Xms512m"
+    ```
+
+    ### 5. Run the database installation script
+
+    ```bash
+    sudo /usr/share/thingsboard/bin/install/install.sh
+    ```
+
+    A successful run prints:
+
+    ```
+    ThingsBoard installed successfully!
+    ```
+
+    ### 6. Start the ThingsBoard service
+
+    ```bash
+    sudo service thingsboard start
+    ```
+
+    To enable automatic startup on boot:
+
+    ```bash
+    sudo systemctl enable thingsboard
+    ```
+
+    ### 7. Check the service status and logs
+
+    ```bash
+    sudo service thingsboard status
+    sudo journalctl -u thingsboard -f
+    ```
+
+    Wait for the log line:
+
+    ```
+    Started ThingsBoard in XX seconds
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## Post-Installation: First Login
+
+Once ThingsBoard has started, open your browser and go to:
+
+```
+http://localhost:8080
+```
+
+The setup wizard will appear on the very first visit. Complete the wizard to create your system administrator account and optionally load demo data.
+
+<Warning>
+  **Change the default credentials immediately.** The default system administrator credentials used internally (`sysadmin@thingsboard.org` / `sysadmin`) must never be used in any network-accessible environment. The setup wizard prompts you to create a new account with your own secure email and password. After setup, navigate to **Profile → Change Password** to rotate the password on any existing account.
+</Warning>
+
+After completing the setup wizard, you are logged in as a system administrator. From here you can:
+
+1. **Create a Tenant** — navigate to **Tenants → "+"** to add your first tenant organisation.
+2. **Create a Tenant Administrator** — within a tenant, add a user with the `TENANT_ADMIN` role.
+3. **Provision Devices** — navigate to **Entities → Devices** to add and configure IoT devices.
+
+## Upgrading ThingsBoard
+
+When upgrading from a previous version, run the upgrade script (package install) or set `UPGRADE_TB=true` and `FROM_VERSION=<previous-version>` (Docker) instead of `INSTALL_TB=true`. The upgrade process applies incremental database migrations without dropping existing data.
+
+```bash
+# Docker: trigger schema migration
+docker run --rm \
+  -e UPGRADE_TB=true \
+  -e FROM_VERSION=3.9.0 \
+  -e SPRING_DATASOURCE_URL=jdbc:postgresql://tb-postgres:5432/thingsboard \
+  -e SPRING_DATASOURCE_USERNAME=postgres \
+  -e SPRING_DATASOURCE_PASSWORD=postgres \
+  thingsboard/tb-node:latest
+```
+
+```bash
+# Ubuntu package: run the upgrade script
+sudo /usr/share/thingsboard/bin/install/upgrade.sh --fromVersion=3.9.0
+```
+
+## Next Steps
+
+<Card title="Quickstart — Send Your First Telemetry" icon="rocket" href="/quickstart">
+  Connect a device to your freshly installed ThingsBoard instance and build a live dashboard in minutes.
+</Card>

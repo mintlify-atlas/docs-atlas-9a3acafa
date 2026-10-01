@@ -1,0 +1,213 @@
+---
+title: "ThingsBoard Edge: Edge Computing for IoT"
+sidebarTitle: "Edge"
+description: "ThingsBoard Edge extends the platform to remote sites, enabling local data processing, dashboards, and rule engine execution even when connectivity to the cloud is interrupted."
+---
+
+ThingsBoard Edge brings the full power of the platform — rule engine, dashboards, device management, and telemetry storage — to remote sites and on-premises installations. Each Edge node is a complete ThingsBoard instance that stays synchronized with the central server over a gRPC channel. When the upstream connection is lost, the Edge continues operating autonomously: it processes device data, evaluates rule chains, and stores telemetry locally. Once connectivity is restored, buffered data is automatically replayed to the server.
+
+<Note>
+  ThingsBoard Edge is a **separate downloadable package** from the main ThingsBoard server. Download it from [thingsboard.io/docs/edge/](https://thingsboard.io/docs/edge/) and install it on the hardware at each remote site. The server-side `edges` configuration in `thingsboard.yml` controls only the cloud/server side of the gRPC channel.
+</Note>
+
+## Use Cases
+
+<CardGroup cols={2}>
+  <Card title="Offline Operation" icon="wifi-off">
+    Continue collecting telemetry, firing rule chains, and serving local dashboards even when the WAN link to the cloud is down. All data is buffered and synchronized when connectivity resumes.
+  </Card>
+  <Card title="Low-Latency Control" icon="bolt">
+    Run time-sensitive rule chains and RPC commands locally, eliminating round-trip latency to a cloud server. Actuator responses happen in milliseconds rather than seconds.
+  </Card>
+  <Card title="Data Sovereignty" icon="shield">
+    Keep raw device data within a specific geographic boundary or network segment. Only processed results and aggregated telemetry are forwarded to the central server.
+  </Card>
+  <Card title="Bandwidth Reduction" icon="arrow-trend-down">
+    Pre-process, filter, and aggregate high-frequency sensor data at the edge before transmitting summaries upstream, dramatically reducing WAN bandwidth consumption.
+  </Card>
+</CardGroup>
+
+## Architecture
+
+The synchronization channel between the Edge node and the ThingsBoard server uses **gRPC** over a persistent bidirectional stream:
+
+```
+┌─────────────────────┐         gRPC (port 7070)        ┌──────────────────────┐
+│   ThingsBoard Edge  │◄───────────────────────────────►│  ThingsBoard Server  │
+│  (remote site)      │                                  │  (cloud / on-prem)   │
+│                     │  Server → Edge:                  │                      │
+│  ● Rule Engine      │    Rule chains, Dashboards,      │  ● Central DB        │
+│  ● Local DB         │    Device profiles, Users        │  ● Rule Engine       │
+│  ● Dashboards       │                                  │  ● API / UI          │
+│  ● Device Mgmt      │  Edge → Server:                  │                      │
+└─────────────────────┘    Telemetry, Alarms, Attributes └──────────────────────┘
+```
+
+The gRPC server on the ThingsBoard server side binds to port **7070** by default:
+
+```yaml
+edges:
+  enabled: "${EDGES_ENABLED:true}"
+  rpc:
+    port: "${EDGES_RPC_PORT:7070}"
+    keep_alive_time_sec: "${EDGES_RPC_KEEP_ALIVE_TIME_SEC:10}"
+    keep_alive_timeout_sec: "${EDGES_RPC_KEEP_ALIVE_TIMEOUT_SEC:5}"
+    client_max_keep_alive_time_sec: "${EDGES_RPC_CLIENT_MAX_KEEP_ALIVE_TIME_SEC:1}"
+    max_inbound_message_size: "${EDGES_RPC_MAX_INBOUND_MESSAGE_SIZE:4194304}"  # 4 MB
+```
+
+## Data Synchronization
+
+### Server → Edge (Downlink)
+
+The server pushes configuration and entity updates to the Edge automatically. Synchronized objects include:
+
+- **Rule chains** — edge-specific rule chains assigned to the Edge entity
+- **Dashboards** — dashboards assigned to the Edge
+- **Device profiles** — used by locally connected devices
+- **Device credentials** — so the Edge can authenticate devices independently
+- **Users and customer hierarchy** — for local access control
+- **Widgets and widget bundles** — for local dashboard rendering
+- **Admin settings** — mail, SMS, and other system-level settings
+
+Downlink events are stored in the `edge_event` table and delivered with sequence-number ordering to guarantee correct replay after reconnection:
+
+```yaml
+edges:
+  storage:
+    max_read_records_count: "${EDGES_STORAGE_MAX_READ_RECORDS_COUNT:50}"
+    no_read_records_sleep: "${EDGES_NO_READ_RECORDS_SLEEP:1000}"       # ms
+    sleep_between_batches: "${EDGES_SLEEP_BETWEEN_BATCHES:60000}"      # ms
+    misordering_compensation_millis: "${EDGES_MISORDERING_COMPENSATION_MILLIS:60000}"
+```
+
+### Edge → Server (Uplink)
+
+The Edge streams the following data types back to the server:
+
+- **Telemetry** (time-series key-value data)
+- **Attributes** (client-side and shared attributes)
+- **Alarms** (locally created and updated alarms)
+- **RPC responses** (results of commands sent from the server to edge-connected devices)
+- **Relation changes** (entity relationship updates)
+
+Edge communication statistics are retained in time-series for diagnostics:
+
+```yaml
+edges:
+  stats:
+    enabled: "${EDGES_STATS_ENABLED:true}"
+    ttl: "${EDGES_STATS_TTL:30}"                          # days
+    report-interval-millis: "${EDGES_STATS_REPORT_INTERVAL_MS:600000}"  # 10 min
+```
+
+## Provisioning an Edge Instance
+
+<Steps>
+  <Step title="Create the Edge Entity on the Server">
+    In the ThingsBoard server UI, go to **Edge Management → Edges** → click the **+** button. Provide a name and an optional type label. Click **Add**.
+
+    After creation, open the Edge entity and note the **Edge key** and **Edge secret** displayed in the credentials section. These are the credentials the Edge node uses to authenticate with the server.
+  </Step>
+  <Step title="Install ThingsBoard Edge on the Remote Host">
+    Download the ThingsBoard Edge package for your OS from the official site and install it following the platform-specific guide. The Edge uses the same `thingsboard.yml` layout as the server, but with additional `cloud.*` settings that point it at the upstream server.
+  </Step>
+  <Step title="Configure Edge Credentials">
+    On the Edge host, set the following environment variables (or equivalent `thingsboard.yml` values) before starting the service:
+
+    ```bash
+    CLOUD_RPC_HOST=thingsboard.example.com   # Hostname or IP of the TB server
+    CLOUD_RPC_PORT=7070                       # gRPC port (default)
+    CLOUD_ROUTING_KEY=<edge-key>              # Copied from the Edge entity
+    CLOUD_ROUTING_SECRET=<edge-secret>        # Copied from the Edge entity
+    ```
+  </Step>
+  <Step title="Start the Edge Service">
+    ```bash
+    sudo systemctl start thingsboard-edge
+    sudo systemctl enable thingsboard-edge
+    ```
+
+    Check the logs to confirm the Edge has connected:
+
+    ```bash
+    sudo journalctl -u thingsboard-edge -f
+    ```
+
+    Look for a line like:
+    ```
+    Edge connected to cloud, sessionId: <uuid>
+    ```
+
+    Back on the server, the Edge entity's status indicator turns green.
+  </Step>
+</Steps>
+
+## Edge Rule Chains
+
+Edge rule chains run entirely on the Edge node, with no round-trip to the server required. You can assign any rule chain in ThingsBoard to one or more Edge instances, and the server will automatically push it down.
+
+A typical edge rule chain pattern:
+
+1. **Message Type Switch** — routes telemetry, RPC requests, and attribute updates to separate branches.
+2. **Transformation / filtering** — apply TBEL scripts to normalize data or drop noise.
+3. **Save Timeseries** — persist filtered telemetry to the Edge's local database.
+4. **Push to Cloud** — selectively forward enriched data upstream via the **Push to cloud** rule node.
+5. **Alarm Rules** — fire alarms locally for immediate actuator control without cloud dependency.
+
+The **Push to cloud** rule node is the gateway between local processing and the central server. Only messages explicitly routed through it are forwarded upstream.
+
+## gRPC Channel TLS
+
+For production deployments where the gRPC link traverses untrusted networks, enable TLS on the gRPC server:
+
+```yaml
+edges:
+  rpc:
+    ssl:
+      enabled: "${EDGES_RPC_SSL_ENABLED:false}"
+      cert: "${EDGES_RPC_SSL_CERT:certChainFile.pem}"
+      private_key: "${EDGES_RPC_SSL_PRIVATE_KEY:privateKeyFile.pem}"
+      key_password: "${EDGES_RPC_SSL_KEY_PASSWORD:}"
+```
+
+On the Edge side, set `CLOUD_RPC_SSL_ENABLED=true` and provide the corresponding CA certificate to validate the server's identity.
+
+## Key Configuration Reference
+
+### Server-Side Variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `EDGES_ENABLED` | `true` | Enable or disable Edge support on the server |
+| `EDGES_RPC_PORT` | `7070` | gRPC listen port for Edge connections |
+| `EDGES_RPC_SSL_ENABLED` | `false` | Enable TLS on the gRPC channel |
+| `EDGES_STORAGE_MAX_READ_RECORDS_COUNT` | `50` | Max edge events read per DB poll |
+| `EDGES_SCHEDULER_POOL_SIZE` | `4` | Threads checking DB for edge events |
+| `EDGES_SEND_SCHEDULER_POOL_SIZE` | `4` | Threads sending downlink messages |
+| `EDGES_GRPC_CALLBACK_POOL_SIZE` | `4` | Threads handling gRPC callbacks |
+| `EDGES_STATS_ENABLED` | `true` | Collect edge communication statistics |
+| `EDGES_STATS_TTL` | `30` | Days to retain edge stats in time-series |
+| `EDGES_DISCONNECT_NOTIFICATION_DELAY_MS` | `60000` | Delay before firing a disconnect notification |
+
+### Edge-Side Variables
+
+| Variable | Description |
+|---|---|
+| `CLOUD_RPC_HOST` | Hostname or IP address of the ThingsBoard server |
+| `CLOUD_RPC_PORT` | gRPC port on the server (default `7070`) |
+| `CLOUD_ROUTING_KEY` | Edge key copied from the server UI |
+| `CLOUD_ROUTING_SECRET` | Edge secret copied from the server UI |
+| `CLOUD_RPC_SSL_ENABLED` | Set `true` to use TLS for the gRPC connection |
+
+## Disconnection Behavior
+
+When an Edge node loses connectivity, the server debounces the disconnect notification to avoid spam from flapping connections:
+
+```yaml
+edges:
+  connectivity:
+    disconnect_notification_delay_ms: "${EDGES_DISCONNECT_NOTIFICATION_DELAY_MS:60000}"
+```
+
+If the Edge reconnects within 60 seconds (the default), no "disconnected" notification is sent to the Notification Center. Rule engine events and state attributes update immediately regardless of this delay.

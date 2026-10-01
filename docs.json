@@ -1,72 +1,114 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mintlify Starter Kit",
+  "name": "ThingsBoard",
+  "theme": "maple",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#3d50f5",
+    "light": "#345484",
+    "dark": "#0b4db1"
   },
-  "favicon": "/favicon.svg",
-  "navigation": {
-    "pages": [
-      {
-        "group": "Getting Started",
-        "pages": [
-          "index",
-          "quickstart"
-        ]
-      }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
+  "favicon": "https://media.brand.dev/1391ed9a-1912-4958-ba06-651898058bea.svg",
   "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:support@mintlify.com"
-      }
-    ],
     "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://app.mintlify.com"
+      "type": "github",
+      "href": "https://github.com/thingsboard/thingsboard"
     }
-  },
-  "contextual": {
-    "options": [
-      "copy",
-      "view",
-      "chatgpt",
-      "claude",
-      "perplexity",
-      "mcp",
-      "cursor",
-      "vscode"
-    ]
   },
   "footer": {
     "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
+      "github": "https://github.com/thingsboard/thingsboard"
     }
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/entities",
+              "concepts/tenancy",
+              "concepts/rule-engine",
+              "concepts/telemetry"
+            ]
+          },
+          {
+            "group": "Device Connectivity",
+            "pages": [
+              "connectivity/mqtt",
+              "connectivity/http",
+              "connectivity/coap",
+              "connectivity/lwm2m",
+              "connectivity/snmp"
+            ]
+          },
+          {
+            "group": "Dashboards & Visualization",
+            "pages": [
+              "dashboards/overview",
+              "dashboards/widgets",
+              "dashboards/scada"
+            ]
+          },
+          {
+            "group": "Administration",
+            "pages": [
+              "administration/configuration",
+              "administration/security",
+              "administration/notifications",
+              "administration/edge"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "api/overview",
+              "api/authentication"
+            ]
+          },
+          {
+            "group": "Device & Asset APIs",
+            "pages": [
+              "api/devices",
+              "api/assets",
+              "api/entity-relations",
+              "api/telemetry"
+            ]
+          },
+          {
+            "group": "Management APIs",
+            "pages": [
+              "api/tenants",
+              "api/users",
+              "api/dashboards",
+              "api/rule-chains",
+              "api/alarms"
+            ]
+          },
+          {
+            "group": "Device API",
+            "pages": [
+              "api/device-telemetry",
+              "api/rpc",
+              "api/ota-updates"
+            ]
+          }
+        ]
+      }
+    ]
   }
 }

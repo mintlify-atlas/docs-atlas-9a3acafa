@@ -1,0 +1,387 @@
+---
+title: "REST API Endpoints for Alarm Management in ThingsBoard"
+sidebarTitle: "Alarms"
+description: "Query, acknowledge, clear, and delete alarms in ThingsBoard via REST API. Filter by entity, severity, status, and time range."
+---
+
+ThingsBoard alarms represent time-bounded fault conditions associated with specific entities — devices, assets, customers, or tenants. Alarms are typically created and cleared by the rule engine in response to telemetry thresholds or connectivity events, but they can also be created and managed directly via the REST API. Each alarm tracks its full lifecycle: when it started, when it was acknowledged, and when it was cleared.
+
+---
+
+## Alarm states
+
+Alarms move through a state machine defined by two orthogonal flags — **cleared** and **acknowledged**:
+
+| State | Meaning |
+|-------|---------|
+| `ACTIVE_UNACK` | Fault condition is ongoing; no one has acknowledged it yet. |
+| `ACTIVE_ACK` | Fault condition is ongoing; an operator has acknowledged it. |
+| `CLEARED_UNACK` | Fault condition resolved; not yet acknowledged. |
+| `CLEARED_ACK` | Fault condition resolved and acknowledged — terminal state. |
+
+---
+
+## Alarm severities
+
+| Severity | Typical use |
+|----------|-------------|
+| `CRITICAL` | Immediate attention required — system failure, data loss risk |
+| `MAJOR` | Significant degradation affecting operations |
+| `MINOR` | Non-critical issue worth investigating |
+| `WARNING` | Pre-fault condition or soft threshold breach |
+| `INDETERMINATE` | Severity cannot be determined |
+
+---
+
+## Alarm object
+
+<ResponseField name="id" type="object">
+  Unique identifier. Contains `entityType: "ALARM"` and a UUID `id`.
+</ResponseField>
+
+<ResponseField name="tenantId" type="object">
+  Tenant that owns this alarm.
+</ResponseField>
+
+<ResponseField name="originator" type="object">
+  The entity that triggered the alarm (e.g., a device). Contains `entityType` and UUID `id`.
+</ResponseField>
+
+<ResponseField name="type" type="string" required>
+  A short string classifying the alarm, matching the type used in the rule engine (e.g., `"High Temperature"`, `"Connectivity Lost"`).
+</ResponseField>
+
+<ResponseField name="severity" type="string" required>
+  Alarm severity. One of `CRITICAL`, `MAJOR`, `MINOR`, `WARNING`, `INDETERMINATE`.
+</ResponseField>
+
+<ResponseField name="status" type="string">
+  Current lifecycle state: `ACTIVE_UNACK`, `ACTIVE_ACK`, `CLEARED_UNACK`, or `CLEARED_ACK`.
+</ResponseField>
+
+<ResponseField name="startTs" type="integer">
+  Unix timestamp (milliseconds) when the alarm was first raised.
+</ResponseField>
+
+<ResponseField name="endTs" type="integer">
+  Unix timestamp (milliseconds) when the alarm was cleared (`0` if still active).
+</ResponseField>
+
+<ResponseField name="ackTs" type="integer">
+  Unix timestamp (milliseconds) when the alarm was acknowledged (`0` if not yet acknowledged).
+</ResponseField>
+
+<ResponseField name="clearTs" type="integer">
+  Unix timestamp (milliseconds) when the alarm was cleared (`0` if still active).
+</ResponseField>
+
+<ResponseField name="details" type="object">
+  Arbitrary JSON payload with contextual information (e.g., the actual sensor reading that triggered the alarm, device location, rule-engine-provided metadata).
+</ResponseField>
+
+<ResponseField name="assigneeId" type="object">
+  Optional reference to the user currently assigned to investigate this alarm.
+</ResponseField>
+
+---
+
+## Endpoints
+
+### Get alarm by ID
+
+```http
+GET /api/alarm/{alarmId}
+Authorization: Bearer {jwtToken}
+```
+
+<ParamField path="alarmId" type="string" required>
+  UUID of the alarm to retrieve.
+</ParamField>
+
+---
+
+### Get alarm info (enriched)
+
+Returns the alarm with additional context: originator name, assignee name.
+
+```http
+GET /api/alarm/info/{alarmId}
+Authorization: Bearer {jwtToken}
+```
+
+<ParamField path="alarmId" type="string" required>
+  UUID of the alarm.
+</ParamField>
+
+---
+
+### Create or update alarm
+
+```http
+POST /api/alarm
+Authorization: Bearer {jwtToken}
+Content-Type: application/json
+```
+
+**Request body**
+
+```json
+{
+  "originator": {
+    "entityType": "DEVICE",
+    "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+  },
+  "type": "High Temperature",
+  "severity": "CRITICAL",
+  "status": "ACTIVE_UNACK",
+  "startTs": 1712000000000,
+  "details": {
+    "temperature": 95.3,
+    "threshold": 80.0
+  }
+}
+```
+
+---
+
+### List alarms for an entity
+
+Returns a paginated list of alarms associated with a specific entity (device, asset, etc.).
+
+```http
+GET /api/alarm/{entityType}/{entityId}?pageSize={pageSize}&page={page}
+Authorization: Bearer {jwtToken}
+```
+
+<ParamField path="entityType" type="string" required>
+  Type of the originating entity: `DEVICE`, `ASSET`, `CUSTOMER`, `TENANT`, etc.
+</ParamField>
+
+<ParamField path="entityId" type="string" required>
+  UUID of the entity.
+</ParamField>
+
+<ParamField query="pageSize" type="integer" required>
+  Number of results per page.
+</ParamField>
+
+<ParamField query="page" type="integer" required>
+  Zero-based page index.
+</ParamField>
+
+<ParamField query="searchStatus" type="string">
+  Convenience filter. One of `ANY`, `ACTIVE`, `CLEARED`, `ACK`, `UNACK`. Takes precedence over `status`.
+</ParamField>
+
+<ParamField query="status" type="string">
+  Exact status filter: `ACTIVE_UNACK`, `ACTIVE_ACK`, `CLEARED_UNACK`, or `CLEARED_ACK`.
+</ParamField>
+
+<ParamField query="severity" type="string">
+  Filter by severity: `CRITICAL`, `MAJOR`, `MINOR`, `WARNING`, or `INDETERMINATE`.
+</ParamField>
+
+<ParamField query="startTime" type="integer">
+  Filter alarms that started at or after this Unix timestamp (milliseconds).
+</ParamField>
+
+<ParamField query="endTime" type="integer">
+  Filter alarms that started at or before this Unix timestamp (milliseconds).
+</ParamField>
+
+<ParamField query="fetchOriginator" type="boolean">
+  If `true`, the response includes the originator entity object. Default: `false`.
+</ParamField>
+
+---
+
+### List all tenant alarms
+
+Returns a paginated list of **all** alarms across all entities in the current tenant. Useful for building an operations dashboard or NOC view.
+
+```http
+GET /api/alarms?pageSize={pageSize}&page={page}
+Authorization: Bearer {jwtToken}
+```
+
+<ParamField query="pageSize" type="integer" required>
+  Number of results per page.
+</ParamField>
+
+<ParamField query="page" type="integer" required>
+  Zero-based page index.
+</ParamField>
+
+<ParamField query="searchStatus" type="string">
+  Filter by high-level status: `ANY`, `ACTIVE`, `CLEARED`, `ACK`, `UNACK`.
+</ParamField>
+
+<ParamField query="severity" type="string">
+  Filter by severity level.
+</ParamField>
+
+<ParamField query="startTime" type="integer">
+  Lower bound on alarm `startTs` (milliseconds).
+</ParamField>
+
+<ParamField query="endTime" type="integer">
+  Upper bound on alarm `startTs` (milliseconds).
+</ParamField>
+
+---
+
+### Acknowledge alarm
+
+Records that an operator has seen and taken note of the alarm. Transitions state from `*_UNACK` to `*_ACK`.
+
+```http
+POST /api/alarm/{alarmId}/ack
+Authorization: Bearer {jwtToken}
+```
+
+<ParamField path="alarmId" type="string" required>
+  UUID of the alarm to acknowledge.
+</ParamField>
+
+---
+
+### Clear alarm
+
+Marks the alarm as resolved. Transitions state from `ACTIVE_*` to `CLEARED_*`.
+
+```http
+POST /api/alarm/{alarmId}/clear
+Authorization: Bearer {jwtToken}
+```
+
+<ParamField path="alarmId" type="string" required>
+  UUID of the alarm to clear.
+</ParamField>
+
+---
+
+### Assign alarm to a user
+
+Assigns responsibility for investigating the alarm to a specific user.
+
+```http
+POST /api/alarm/{alarmId}/assign/{assigneeId}
+Authorization: Bearer {jwtToken}
+```
+
+<ParamField path="alarmId" type="string" required>
+  UUID of the alarm.
+</ParamField>
+
+<ParamField path="assigneeId" type="string" required>
+  UUID of the user to assign as the alarm owner.
+</ParamField>
+
+---
+
+### Unassign alarm
+
+Removes the current assignee from an alarm.
+
+```http
+DELETE /api/alarm/{alarmId}/assign
+Authorization: Bearer {jwtToken}
+```
+
+<ParamField path="alarmId" type="string" required>
+  UUID of the alarm to unassign.
+</ParamField>
+
+---
+
+### Delete alarm
+
+<Warning>
+  Permanently deletes the alarm record. Prefer clearing alarms over deleting them — deletion removes the audit history.
+</Warning>
+
+```http
+DELETE /api/alarm/{alarmId}
+Authorization: Bearer {jwtToken}
+```
+
+<ParamField path="alarmId" type="string" required>
+  UUID of the alarm to delete.
+</ParamField>
+
+---
+
+### Get highest alarm severity for an entity
+
+Returns only the highest active alarm severity for an entity — useful for coloring entity markers on a map widget or triggering escalation logic.
+
+```http
+GET /api/alarm/highestSeverity/{entityType}/{entityId}
+Authorization: Bearer {jwtToken}
+```
+
+<ParamField path="entityType" type="string" required>
+  Entity type: `DEVICE`, `ASSET`, etc.
+</ParamField>
+
+<ParamField path="entityId" type="string" required>
+  UUID of the entity.
+</ParamField>
+
+**Response** — a plain string, e.g. `"CRITICAL"`, or `null` if no active alarms exist.
+
+---
+
+## Example: list all CRITICAL unacknowledged alarms
+
+The following request retrieves the first page of `CRITICAL` alarms in `ACTIVE_UNACK` state across all entities in the tenant:
+
+```bash
+curl -G "https://thingsboard.example.com/api/alarms" \
+  -H "Authorization: Bearer $TENANT_JWT" \
+  --data-urlencode "pageSize=50" \
+  --data-urlencode "page=0" \
+  --data-urlencode "searchStatus=UNACK" \
+  --data-urlencode "severity=CRITICAL"
+```
+
+**Example response**
+
+```json
+{
+  "data": [
+    {
+      "id": { "entityType": "ALARM", "id": "abc-..." },
+      "originator": { "entityType": "DEVICE", "id": "def-..." },
+      "type": "High Temperature",
+      "severity": "CRITICAL",
+      "status": "ACTIVE_UNACK",
+      "startTs": 1712000000000,
+      "endTs": 0,
+      "ackTs": 0,
+      "details": { "temperature": 95.3 }
+    }
+  ],
+  "totalPages": 1,
+  "totalElements": 1,
+  "hasNext": false
+}
+```
+
+Then acknowledge all returned alarms in sequence:
+
+```bash
+curl -X POST "https://thingsboard.example.com/api/alarm/abc-.../ack" \
+  -H "Authorization: Bearer $TENANT_JWT"
+```
+
+---
+
+## Error codes
+
+| HTTP Status | Meaning |
+|-------------|---------|
+| `400 Bad Request` | Invalid `severity`, `status` value, or missing required field |
+| `401 Unauthorized` | Missing or expired JWT token |
+| `403 Forbidden` | Insufficient role — Customer Users can only view alarms for their own entities |
+| `404 Not Found` | Alarm or entity UUID does not exist |

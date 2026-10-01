@@ -1,0 +1,328 @@
+---
+title: "REST API Endpoints for ThingsBoard Device Management"
+sidebarTitle: "Devices"
+description: "Create, read, update, and delete devices in ThingsBoard via REST API. Manage credentials, assign to customers, query by profile, and check connectivity status."
+---
+
+The Device is the primary entity in ThingsBoard that represents a physical or virtual IoT node — a sensor, gateway, actuator, or any connected hardware component. Every device belongs to a tenant and can optionally be assigned to a customer. The REST API lets you provision devices programmatically, retrieve their credentials, and manage their lifecycle without touching the UI.
+
+All device endpoints require a valid JWT bearer token obtained from the [Authentication API](/api/authentication). Tenant administrators can manage all devices; customer users can manage only the devices assigned to their customer.
+
+## Device object
+
+<ResponseField name="id" type="object">
+  Unique device identifier. Contains an `entityType` field set to `"DEVICE"` and an `id` field with the UUID string.
+</ResponseField>
+
+<ResponseField name="name" type="string" required>
+  Human-readable device name. Must be unique within the tenant scope. Recommended to use stable hardware identifiers such as MAC address or IMEI.
+</ResponseField>
+
+<ResponseField name="type" type="string">
+  Legacy device type string. Superseded by `deviceProfileId` in recent ThingsBoard versions but still accepted for backwards compatibility.
+</ResponseField>
+
+<ResponseField name="label" type="string">
+  Optional free-form label for user-friendly display in dashboards and widgets. Does not need to be unique.
+</ResponseField>
+
+<ResponseField name="tenantId" type="object">
+  Identifier of the tenant that owns this device. Set automatically by the platform on creation.
+</ResponseField>
+
+<ResponseField name="customerId" type="object">
+  Identifier of the customer the device is currently assigned to. `null` when the device is not assigned to any customer.
+</ResponseField>
+
+<ResponseField name="deviceProfileId" type="object">
+  Reference to the device profile that controls the device's transport configuration, data validation rules, firmware OTA settings, and default rule chain.
+</ResponseField>
+
+<ResponseField name="createdTime" type="long">
+  Unix epoch timestamp (milliseconds) recording when the device was first created.
+</ResponseField>
+
+<ResponseField name="additionalInfo" type="object">
+  Arbitrary JSON object for storing custom metadata such as location coordinates, description, or external system references.
+</ResponseField>
+
+---
+
+## Endpoints
+
+### Create or update a device
+
+<ResponseField name="POST /api/device" type="endpoint" />
+
+Creates a new device when no `id` is supplied in the request body, or updates an existing device when a valid `id` is provided. On creation the platform auto-generates a UUID and — unless you supply an `accessToken` query parameter — creates a random `ACCESS_TOKEN` credential for the device.
+
+Device names must be unique per tenant. Referencing a non-existent `id` returns `404 Not Found`.
+
+**Query parameters**
+
+<ParamField query="accessToken" type="string">
+  Optional initial access token to assign during device creation. If omitted, a random token is generated.
+</ParamField>
+
+<ParamField query="nameConflictPolicy" type="string" default="FAIL">
+  How to handle a name collision: `FAIL` (default), `RENAME`, or `IGNORE`.
+</ParamField>
+
+<CodeGroup>
+```bash Create a device
+curl -X POST 'http://localhost:8080/api/device' \
+  -H 'Authorization: Bearer $TOKEN' \
+  -H 'Content-Type: application/json' \
+  -d '{"name": "Sensor-001", "type": "default"}'
+```
+
+```bash Create a device with a specific access token
+curl -X POST 'http://localhost:8080/api/device?accessToken=my-secure-token' \
+  -H 'Authorization: Bearer $TOKEN' \
+  -H 'Content-Type: application/json' \
+  -d '{"name": "Sensor-002", "type": "default"}'
+```
+
+```json Response
+{
+  "id": {"entityType": "DEVICE", "id": "784f394c-42b6-11ef-9e02-0050568351c8"},
+  "createdTime": 1720000000000,
+  "tenantId": {"entityType": "TENANT", "id": "af9f9b6e-41e7-11ef-9e02-0050568351c8"},
+  "customerId": null,
+  "name": "Sensor-001",
+  "type": "default",
+  "label": null,
+  "deviceProfileId": {"entityType": "DEVICE_PROFILE", "id": "12345678-1234-1234-1234-123456789012"},
+  "additionalInfo": null
+}
+```
+</CodeGroup>
+
+---
+
+### Get a device by ID
+
+<ResponseField name="GET /api/device/{deviceId}" type="endpoint" />
+
+Returns the full device object for the given device UUID. Tenant admins can retrieve any device in their tenant; customer users can only retrieve devices assigned to their customer.
+
+<ParamField path="deviceId" type="string" required>
+  UUID of the device to retrieve.
+</ParamField>
+
+```bash
+curl -X GET 'http://localhost:8080/api/device/784f394c-42b6-11ef-9e02-0050568351c8' \
+  -H 'Authorization: Bearer $TOKEN'
+```
+
+---
+
+### Get device info by ID
+
+<ResponseField name="GET /api/device/info/{deviceId}" type="endpoint" />
+
+Returns the extended `DeviceInfo` object, which includes additional derived fields such as `deviceProfileName`, `customerTitle`, and `active` (connectivity status). Prefer this endpoint when rendering device cards in a UI.
+
+<ParamField path="deviceId" type="string" required>
+  UUID of the device.
+</ParamField>
+
+---
+
+### Delete a device
+
+<ResponseField name="DELETE /api/device/{deviceId}" type="endpoint" />
+
+Permanently deletes the device, its credentials, all associated telemetry, and all entity relations that reference it. This action cannot be undone.
+
+<ParamField path="deviceId" type="string" required>
+  UUID of the device to delete.
+</ParamField>
+
+```bash
+curl -X DELETE 'http://localhost:8080/api/device/784f394c-42b6-11ef-9e02-0050568351c8' \
+  -H 'Authorization: Bearer $TOKEN'
+```
+
+---
+
+### List tenant devices
+
+<ResponseField name="GET /api/tenant/devices" type="endpoint" />
+
+Returns a paginated list of all devices belonging to the current tenant. Supports filtering by legacy type string and free-text search.
+
+<ParamField query="pageSize" type="integer" required>
+  Number of records to return per page.
+</ParamField>
+
+<ParamField query="page" type="integer" required>
+  Zero-based page index.
+</ParamField>
+
+<ParamField query="type" type="string">
+  Filter by legacy device type string.
+</ParamField>
+
+<ParamField query="textSearch" type="string">
+  Partial match filter applied to the device name.
+</ParamField>
+
+<ParamField query="sortProperty" type="string">
+  Field to sort by. Allowed values: `createdTime`, `name`, `deviceProfileName`, `label`, `customerTitle`.
+</ParamField>
+
+<ParamField query="sortOrder" type="string">
+  Sort direction: `ASC` or `DESC`.
+</ParamField>
+
+```bash
+curl -X GET 'http://localhost:8080/api/tenant/devices?pageSize=20&page=0&sortProperty=createdTime&sortOrder=DESC' \
+  -H 'Authorization: Bearer $TOKEN'
+```
+
+---
+
+### List customer devices
+
+<ResponseField name="GET /api/customer/{customerId}/devices" type="endpoint" />
+
+Returns a paginated list of devices assigned to the specified customer. Accessible by both tenant admins and the customer's own users.
+
+<ParamField path="customerId" type="string" required>
+  UUID of the customer whose devices you want to list.
+</ParamField>
+
+<ParamField query="pageSize" type="integer" required>
+  Number of records per page.
+</ParamField>
+
+<ParamField query="page" type="integer" required>
+  Zero-based page index.
+</ParamField>
+
+---
+
+### Get device credentials
+
+<ResponseField name="GET /api/device/{deviceId}/credentials" type="endpoint" />
+
+Returns the current credentials object for the device. The `credentialsType` field indicates which protocol the device uses to authenticate: `ACCESS_TOKEN`, `MQTT_BASIC`, `X509_CERTIFICATE`, or `LWM2M_CREDENTIALS`.
+
+<ParamField path="deviceId" type="string" required>
+  UUID of the device whose credentials you want to retrieve.
+</ParamField>
+
+<CodeGroup>
+```bash Get credentials
+curl -X GET 'http://localhost:8080/api/device/784f394c-42b6-11ef-9e02-0050568351c8/credentials' \
+  -H 'Authorization: Bearer $TOKEN'
+```
+
+```json Response
+{
+  "id": {"entityType": "DEVICE_CREDENTIALS", "id": "abc12345-..."},
+  "deviceId": {"entityType": "DEVICE", "id": "784f394c-42b6-11ef-9e02-0050568351c8"},
+  "credentialsType": "ACCESS_TOKEN",
+  "credentialsId": "A1_TEST_TOKEN",
+  "credentialsValue": null
+}
+```
+</CodeGroup>
+
+---
+
+### Update device credentials
+
+<ResponseField name="POST /api/device/credentials" type="endpoint" />
+
+Replaces the existing credentials for a device. First call `GET /api/device/{deviceId}/credentials` to retrieve the current credentials `id`, then submit the updated object. You cannot create multiple credentials for the same device.
+
+<CodeGroup>
+```bash Update to a new access token
+curl -X POST 'http://localhost:8080/api/device/credentials' \
+  -H 'Authorization: Bearer $TOKEN' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "id": {"entityType": "DEVICE_CREDENTIALS", "id": "abc12345-..."},
+    "deviceId": {"entityType": "DEVICE", "id": "784f394c-42b6-11ef-9e02-0050568351c8"},
+    "credentialsType": "ACCESS_TOKEN",
+    "credentialsId": "my-new-token"
+  }'
+```
+
+```bash Update to MQTT Basic credentials
+curl -X POST 'http://localhost:8080/api/device/credentials' \
+  -H 'Authorization: Bearer $TOKEN' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "id": {"entityType": "DEVICE_CREDENTIALS", "id": "abc12345-..."},
+    "deviceId": {"entityType": "DEVICE", "id": "784f394c-42b6-11ef-9e02-0050568351c8"},
+    "credentialsType": "MQTT_BASIC",
+    "credentialsId": null,
+    "credentialsValue": "{\"clientId\":\"client-001\",\"userName\":\"user\",\"password\":\"pass\"}"
+  }'
+```
+</CodeGroup>
+
+---
+
+### Assign a device to a customer
+
+<ResponseField name="POST /api/customer/{customerId}/device/{deviceId}" type="endpoint" />
+
+Assigns the device to the specified customer, making it visible and manageable by that customer's users.
+
+<ParamField path="customerId" type="string" required>
+  UUID of the target customer.
+</ParamField>
+
+<ParamField path="deviceId" type="string" required>
+  UUID of the device to assign.
+</ParamField>
+
+```bash
+curl -X POST 'http://localhost:8080/api/customer/cust-uuid-here/device/784f394c-42b6-11ef-9e02-0050568351c8' \
+  -H 'Authorization: Bearer $TOKEN'
+```
+
+---
+
+### Unassign a device from a customer
+
+<ResponseField name="DELETE /api/customer/device/{deviceId}" type="endpoint" />
+
+Removes the device from its currently assigned customer and returns it to the unassigned pool managed solely by the tenant.
+
+<ParamField path="deviceId" type="string" required>
+  UUID of the device to unassign.
+</ParamField>
+
+```bash
+curl -X DELETE 'http://localhost:8080/api/customer/device/784f394c-42b6-11ef-9e02-0050568351c8' \
+  -H 'Authorization: Bearer $TOKEN'
+```
+
+---
+
+## Device provisioning
+
+ThingsBoard supports automatic device provisioning via device profiles. When a device connects for the first time with a provisioning key and secret, the platform can create the device record and its credentials automatically without any manual REST call.
+
+To enable auto-provisioning, configure the **Device Provisioning** section in the target device profile and set the strategy to `Allow to create new devices`. Devices provisioned this way receive the credential type and validation rules defined in the profile.
+
+The provisioning flow uses a dedicated endpoint:
+
+```bash
+curl -X POST 'http://localhost:8080/api/v1/provision' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "deviceName": "AutoDevice-123",
+    "provisionDeviceKey": "your-provision-key",
+    "provisionDeviceSecret": "your-provision-secret"
+  }'
+```
+
+<Note>
+Device profiles control the credentials type accepted by the device, the transport protocol configuration (MQTT, CoAP, HTTP, LwM2M), firmware OTA package assignment, and the default rule chain applied to incoming telemetry. Always associate new devices with a meaningful device profile rather than relying on the built-in `default` profile in production deployments.
+</Note>
